@@ -27,8 +27,13 @@ struct TunerView: View {
     /// The microphone-permission model. Drives which sub-screen we show.
     @State private var permission = MicrophonePermission()
 
-    /// The audio capture engine. Its `level` feeds the meter.
+    /// The audio capture engine. Its `level` feeds the meter and its raw buffers
+    /// feed the pitch detector below.
     @State private var engine = AudioInputEngine()
+
+    /// The pitch detector. We attach it to the engine's buffer stream so it sees
+    /// the same audio, then bind the readout to its published `reading`.
+    @State private var detector = MPMPitchDetector()
 
     /// Whether the user has already seen the first-run priming screen. We read
     /// the persisted flag once into view state, then flip it when priming
@@ -86,22 +91,20 @@ struct TunerView: View {
 
     // MARK: Sub-screens
 
-    /// What we show once the mic is granted: for this slice, the live input
-    /// meter (proof audio flows). Replaced by the tuner hero in slice #03+.
+    /// What we show once the mic is granted: the live pitch readout (note name +
+    /// frequency + cents), with the input meter kept underneath as a secondary
+    /// "is sound getting in?" signal. The headstock hero replaces this in #06.
     private var grantedContent: some View {
         ZStack {
             backdrop
 
-            VStack(spacing: 20) {
-                Text("Listening")
-                    .font(GKFont.title)
-                    .foregroundStyle(GKColor.textPrimary)
+            VStack(spacing: 32) {
+                // The tracer-bullet payoff: live detected pitch on screen.
+                RawPitchReadoutView(reading: detector.reading)
 
-                Text("Play a string — the meter should react.")
-                    .font(GKFont.caption)
-                    .foregroundStyle(GKColor.textSecondary)
-
-                // The live meter, bound to the engine's smoothed level.
+                // Keep the level meter as a small secondary indicator — handy
+                // while developing detection (you can see signal even when no
+                // confident pitch is found yet).
                 InputLevelMeter(level: engine.level)
                     .padding(.horizontal, 40)
             }
@@ -140,16 +143,22 @@ struct TunerView: View {
     private func syncEngine(to state: MicPermissionState) {
         switch state {
         case .granted:
+            // Subscribe the detector to the engine's buffers BEFORE starting, so
+            // it's wired up the moment audio begins flowing. Re-attaching is
+            // harmless (it just re-sets the single buffer handler).
+            detector.attach(to: engine)
             do {
                 try engine.start()
             } catch {
                 // Starting can fail if another app holds the mic. We don't crash;
-                // the meter simply stays at zero. A future slice can surface a
+                // the readout simply stays idle. A future slice can surface a
                 // gentle error; for this slice silence is acceptable.
                 print("AudioInputEngine failed to start: \(error)")
             }
         case .denied, .undetermined:
             engine.stop()
+            // Clear any lingering reading so a stale note doesn't hang on screen.
+            detector.reset()
         }
     }
 

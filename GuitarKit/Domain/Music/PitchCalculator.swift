@@ -151,4 +151,40 @@ public struct PitchCalculator: Sendable {
         guard detectedHz > 0, targetHz > 0 else { return 0 }
         return 1200.0 * log2(detectedHz / targetHz)
     }
+
+    // MARK: Nearest note (frequency → note, for the chromatic readout)
+
+    /// Given a *detected* frequency, find the nearest equal-tempered note and how
+    /// many cents off it is. This is the INVERSE of the core formula — used by
+    /// the pitch detector's raw/chromatic readout to answer "what note is this,
+    /// and how flat/sharp?" without needing a pre-chosen tuning target.
+    ///
+    /// THE MATH (inverting `freq = referenceA · 2^((midi−69)/12)`):
+    ///   • Solve for a *fractional* MIDI number:
+    ///         midiExact = 69 + 12 · log2(freq / referenceA)
+    ///     e.g. exactly 440 Hz → 69.0; a quarter-tone sharp of A4 → 69.5.
+    ///   • Round to the nearest whole MIDI number → the closest real note.
+    ///   • The cent offset is how far the frequency sits from THAT note's own
+    ///     equal-tempered frequency (reusing `cents(from:to:)`), so it's exact
+    ///     rather than a rounding-of-the-rounding.
+    ///
+    /// NOTE: this readout is plain equal temperament — it deliberately ignores
+    /// per-string sweetening, because a chromatic "what note am I hearing?"
+    /// display has no notion of which string you meant. The targeted tuning
+    /// session (a later slice) is where sweetened offsets come back in.
+    ///
+    /// - Returns: the nearest `Note` and the signed cent offset (positive =
+    ///   sharp, negative = flat), or `nil` for a non-positive frequency.
+    public func nearestNote(toFrequency hz: Double) -> (note: Note, centOffset: Double)? {
+        guard hz > 0 else { return nil }
+
+        // Fractional MIDI number, then round to the closest actual note.
+        let midiExact = 69.0 + 12.0 * log2(hz / referenceA.hertz)
+        let nearestMidi = Int(midiExact.rounded())
+
+        let note = Note.from(midiNumber: nearestMidi)
+        // Cents between the heard frequency and that note's equal-tempered pitch.
+        let centOffset = PitchCalculator.cents(from: hz, to: frequency(midiNumber: nearestMidi))
+        return (note, centOffset)
+    }
 }
