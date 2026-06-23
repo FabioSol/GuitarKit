@@ -102,11 +102,15 @@ final class MPMPitchDetector: PitchDetecting {
     ///   - levelGateDB: quietest signal we'll analyze, in dBFS. −45 dBFS sits
     ///     above typical room noise but below normal playing.
     init(
-        calculator: PitchCalculator = PitchCalculator(),
+        calculator: PitchCalculator? = nil,
         clarityThreshold: Float = 0.8,
         levelGateDB: Float = -45
     ) {
-        self.calculator = calculator
+        // Default to A=440 / equal temperament. We build it HERE rather than as a
+        // default argument: under this project's main-actor-by-default isolation,
+        // default-argument expressions run in a non-isolated context where the
+        // (isolated) `PitchCalculator` initializer can't be called.
+        self.calculator = calculator ?? PitchCalculator()
         self.clarityThreshold = clarityThreshold
         // dBFS → linear RMS: amplitude = 10^(dB / 20).
         self.levelGateRMS = pow(10, levelGateDB / 20)

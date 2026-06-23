@@ -64,12 +64,19 @@ final class TuningSessionModel {
     ///   - tolerance: thresholds/timing (dev-config).
     ///   - now: clock source (injectable).
     init(
-        tuning: [Note] = BuiltInTuning.standardGuitar,
-        calculator: PitchCalculator = PitchCalculator(),
-        tolerance: TuningTolerance = .standard,
+        tuning: [Note]? = nil,
+        calculator: PitchCalculator? = nil,
+        tolerance: TuningTolerance? = nil,
         now: @escaping () -> TimeInterval = { CACurrentMediaTime() },
         haptics: TuningHapticsProviding? = nil
     ) {
+        // Resolve the pure-value defaults HERE inside the @MainActor init. As
+        // default *arguments* these would be evaluated in a non-isolated context
+        // and warn, because this project defaults types to main-actor isolation.
+        let tuning = tuning ?? BuiltInTuning.standardGuitar
+        let calculator = calculator ?? PitchCalculator()
+        let tolerance = tolerance ?? .standard
+
         // Derive a target (note + frequency) for every open string, in order.
         let targets = calculator.targets(for: tuning)
         self.session = TuningSession(targets: targets, tolerance: tolerance)
