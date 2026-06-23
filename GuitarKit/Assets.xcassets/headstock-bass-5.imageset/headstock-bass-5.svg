@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER bass headstock (5-string): a long paddle, wider at the top to host
+     the 4+1 tuner arrangement. Swap by replacing this file (keep aspect 0.55). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 550 1000" width="550" height="1000">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+  <path d="M110,950 C55,700 55,280 121,100 Q220,-20 341,100 C440,200 462,340 407,440 C352,520 286,550 264,700 C247,850 209,950 110,950 Z"
+        fill="url(#panel)" stroke="#5A5A64" stroke-width="4"/>
+</svg>

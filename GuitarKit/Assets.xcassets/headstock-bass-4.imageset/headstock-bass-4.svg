@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER bass headstock (4-string): a long, narrow inline paddle. Swap for
+     real art by replacing this file (keep viewBox aspect = 0.55, matching
+     Headstocks/bass-4.json's aspectRatio). Silhouette only — pegs are drawn live. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 550 1000" width="550" height="1000">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+  <path d="M121,970 C55,750 55,300 110,80 Q165,0 231,60 C302,160 308,560 286,800 C275,920 220,990 121,970 Z"
+        fill="url(#panel)" stroke="#5A5A64" stroke-width="4"/>
+</svg>

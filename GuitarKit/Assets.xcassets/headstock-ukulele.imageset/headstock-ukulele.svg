@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER ukulele headstock: a small, friendly rounded shield (2+2 tuners).
+     Swap by replacing this file (keep aspect 0.66, matching ukulele.json). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 1000" width="660" height="1000">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+  <path d="M330,970 C132,950 66,700 79,450 C86,220 198,60 330,60 C462,60 574,220 581,450 C594,700 528,950 330,970 Z"
+        fill="url(#panel)" stroke="#5A5A64" stroke-width="4"/>
+</svg>

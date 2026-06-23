@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER banjo headstock (5-string): a small 2+2 head. The 5th drone peg
+     sits OUTSIDE this silhouette, down the neck on the left (it's a neck-mounted
+     tuner) — that peg dot is drawn live by the app. Swap by replacing this file
+     (keep aspect 0.50, matching banjo-5.json). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 1000" width="500" height="1000">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+  <path d="M250,920 C120,900 80,680 90,450 C95,240 160,100 250,100 C340,100 405,240 410,450 C420,680 380,900 250,920 Z"
+        fill="url(#panel)" stroke="#5A5A64" stroke-width="4"/>
+</svg>

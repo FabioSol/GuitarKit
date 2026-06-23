@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER 7-string guitar headstock: the open-book silhouette, slightly
+     elongated for the 4+3 tuner layout. Swap by replacing this file (keep aspect
+     0.62, matching Headstocks/guitar-7.json). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 1000" width="620" height="1000">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+  <path d="M198.4,950 C55.8,660 68.2,280 105.4,130 Q142.6,30 217,50 Q266.6,110 310,110 Q353.4,110 403,50 Q477.4,30 514.6,130 C551.8,280 564.2,660 421.6,950 Q310,985 198.4,950 Z"
+        fill="url(#panel)" stroke="#5A5A64" stroke-width="4"/>
+</svg>

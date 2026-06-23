@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER violin pegbox: a narrow elongated box with a small scroll notch at
+     the top (2+2 pegs on the sides). Swap by replacing this file (keep aspect
+     0.45, matching violin.json). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 450 1000" width="450" height="1000">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+  <path d="M67.5,950 C36,800 36,200 72,100 C90,40 135,40 162,80 Q225,0 288,80 C315,40 360,40 378,100 C414,200 414,800 382.5,950 Q225,1020 67.5,950 Z"
+        fill="url(#panel)" stroke="#5A5A64" stroke-width="4"/>
+</svg>
