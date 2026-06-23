@@ -105,9 +105,9 @@ struct TunerView: View {
         ZStack {
             backdrop
 
-            VStack(spacing: 32) {
-                // The tracer-bullet payoff: live targeted tuning on screen.
-                TuningSessionView(model: session)
+            VStack(spacing: 24) {
+                // The hero: headstock + cents meter + completion flourish.
+                TunerHeroView(model: session)
 
                 // Keep the level meter as a small secondary indicator — handy
                 // while developing detection (you can see signal even when no

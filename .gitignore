@@ -1,3 +1,6 @@
 
 # Claude Code harness state / agent worktrees
 .claude/
+
+# Generated design-review snapshots
+.snapshots/
