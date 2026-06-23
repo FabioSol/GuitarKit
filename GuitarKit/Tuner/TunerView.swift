@@ -32,8 +32,13 @@ struct TunerView: View {
     @State private var engine = AudioInputEngine()
 
     /// The pitch detector. We attach it to the engine's buffer stream so it sees
-    /// the same audio, then bind the readout to its published `reading`.
+    /// the same audio, then feed its readings into the tuning session below.
     @State private var detector = MPMPitchDetector()
+
+    /// The targeted tuning session (standard guitar for now; instrument/preset
+    /// selection arrives in slice #09). Each detector reading is fed in, and it
+    /// drives the per-string in-tune logic the UI renders.
+    @State private var session = TuningSessionModel()
 
     /// Whether the user has already seen the first-run priming screen. We read
     /// the persisted flag once into view state, then flip it when priming
@@ -91,16 +96,18 @@ struct TunerView: View {
 
     // MARK: Sub-screens
 
-    /// What we show once the mic is granted: the live pitch readout (note name +
-    /// frequency + cents), with the input meter kept underneath as a secondary
-    /// "is sound getting in?" signal. The headstock hero replaces this in #06.
+    /// What we show once the mic is granted: the targeted tuning session (which
+    /// string, how flat/sharp, latch-on-hold), with the input meter underneath
+    /// as a secondary "is sound getting in?" signal. The headstock hero replaces
+    /// the session body in slice #06; chromatic mode (#08) brings back the raw
+    /// note readout behind a toggle.
     private var grantedContent: some View {
         ZStack {
             backdrop
 
             VStack(spacing: 32) {
-                // The tracer-bullet payoff: live detected pitch on screen.
-                RawPitchReadoutView(reading: detector.reading)
+                // The tracer-bullet payoff: live targeted tuning on screen.
+                TuningSessionView(model: session)
 
                 // Keep the level meter as a small secondary indicator — handy
                 // while developing detection (you can see signal even when no
@@ -109,6 +116,12 @@ struct TunerView: View {
                     .padding(.horizontal, 40)
             }
             .padding()
+        }
+        // Drive the session from the detector: each new reading is fed in with
+        // the current time so the hold-to-latch logic advances. `.onChange`
+        // fires on every published reading (the mic naturally varies it ~10×/s).
+        .onChange(of: detector.reading) { _, reading in
+            session.ingest(reading)
         }
         .ignoresSafeArea()
     }
@@ -157,8 +170,10 @@ struct TunerView: View {
             }
         case .denied, .undetermined:
             engine.stop()
-            // Clear any lingering reading so a stale note doesn't hang on screen.
+            // Clear any lingering reading + session state so nothing stale hangs
+            // on screen and a fresh session starts clean next time.
             detector.reset()
+            session.reset()
         }
     }
 
