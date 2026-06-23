@@ -39,16 +39,15 @@ struct TunerHeroView: View {
             .frame(maxHeight: 320)
             // The whole hero gently scales up on completion as the flourish.
             .scaleEffect(celebrate && !reduceMotion ? 1.03 : 1.0)
-            .overlay(alignment: .center) {
-                if model.isComplete { completionOverlay }
-            }
 
-            // THE DEVIATION METER (hidden once complete — nothing left to tune).
-            if !model.isComplete {
+            // Below the head: the completion banner once done (so you still SEE
+            // all six green pegs), otherwise the deviation meter + next nudge.
+            if model.isComplete {
+                completionBanner
+            } else {
                 CentsMeterView(cents: model.deviationCents, zone: model.zone)
                     .padding(.horizontal, 24)
 
-                // The gentle next-string nudge.
                 if let next = model.suggestedStringIndex, next < model.targets.count {
                     Text("Next: \(model.targets[next].note.name)")
                         .font(GKFont.caption)
@@ -75,19 +74,18 @@ struct TunerHeroView: View {
 
     // MARK: - Completion flourish
 
-    private var completionOverlay: some View {
-        VStack(spacing: 8) {
+    private var completionBanner: some View {
+        HStack(spacing: 12) {
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 56))
+                .font(.system(size: 36))
                 .foregroundStyle(GKColor.inTune)
                 // A soft green halo — restrained, not gaudy.
-                .shadow(color: GKColor.inTune.opacity(0.6), radius: celebrate && !reduceMotion ? 18 : 6)
+                .shadow(color: GKColor.inTune.opacity(0.6), radius: celebrate && !reduceMotion ? 16 : 5)
             Text("In tune")
                 .font(GKFont.title)
                 .foregroundStyle(GKColor.textPrimary)
         }
-        .padding(20)
-        .background(GKColor.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 20))
+        .padding(.vertical, 8)
         .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("All strings in tune")

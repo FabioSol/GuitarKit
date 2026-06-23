@@ -37,13 +37,15 @@ struct HeadstockLayout: Equatable {
     /// (G, B, E) on the right. We place them top→bottom on the left and
     /// bottom→top on the right, which traces the natural order your eye follows
     /// from the thick low-E around to the thin high-E.
+    // Peg x-columns (0.24 / 0.76) hug the tuner-post positions on the sides of
+    // `HeadstockShape`; the three y-rows are evenly spaced down each side.
     static let standardGuitar = HeadstockLayout(pegs: [
-        PegPosition(x: 0.30, y: 0.20),   // 0 low E  — left, top
-        PegPosition(x: 0.30, y: 0.50),   // 1 A      — left, middle
-        PegPosition(x: 0.30, y: 0.80),   // 2 D      — left, bottom
-        PegPosition(x: 0.70, y: 0.80),   // 3 G      — right, bottom
-        PegPosition(x: 0.70, y: 0.50),   // 4 B      — right, middle
-        PegPosition(x: 0.70, y: 0.20)    // 5 high E — right, top
+        PegPosition(x: 0.24, y: 0.25),   // 0 low E  — left, top
+        PegPosition(x: 0.24, y: 0.46),   // 1 A      — left, middle
+        PegPosition(x: 0.24, y: 0.67),   // 2 D      — left, bottom
+        PegPosition(x: 0.76, y: 0.67),   // 3 G      — right, bottom
+        PegPosition(x: 0.76, y: 0.46),   // 4 B      — right, middle
+        PegPosition(x: 0.76, y: 0.25)    // 5 high E — right, top
     ])
 
     /// Best-effort layout for an arbitrary string count, so the hero still draws
@@ -66,12 +68,11 @@ struct HeadstockLayout: Equatable {
         var pegs: [PegPosition] = []
         // Left column top→bottom for the low strings…
         for i in 0..<perSide {
-            pegs.append(PegPosition(x: 0.30, y: leftYs[i]))
+            pegs.append(PegPosition(x: 0.24, y: leftYs[i]))
         }
         // …then right column bottom→top for the high strings.
-        for (i, y) in rightYs.enumerated().reversed() {
-            _ = i
-            pegs.append(PegPosition(x: 0.70, y: y))
+        for y in rightYs.reversed() {
+            pegs.append(PegPosition(x: 0.76, y: y))
         }
         return HeadstockLayout(pegs: pegs)
     }

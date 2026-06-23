@@ -2,14 +2,18 @@
 //  HeadstockView.swift
 //  GuitarKit
 //
-//  The hero: a stylized (not skeuomorphic) headstock with one peg per string in
-//  its physical position. The active string's peg highlights; latched strings go
-//  green with a check. Tapping a peg locks onto that string (manual override).
+//  The hero: a stylized (not skeuomorphic) 3+3 guitar headstock with one peg per
+//  string in its physical position. The active string's peg highlights; latched
+//  strings go green with a check. Tapping a peg locks onto that string.
 //
 //  SOLID CONTENT, NEVER GLASS (PRD): the hero carries the semantic tuning colors
-//  (red/blue/green), so it must sit on opaque fills — glass blur would wash out
-//  the very contrast the colors depend on. That's why everything here uses solid
-//  `GKColor` fills rather than `.gkGlass(...)`.
+//  (red/blue/green), so it sits on opaque fills — glass blur would wash out the
+//  very contrast the colors depend on.
+//
+//  ASSET-READY SEAM: the silhouette is one isolated subview (`headstockBody`).
+//  Today it's drawn procedurally with `HeadstockShape`; the Instruments slice
+//  (#09) can swap that single subview for a per-instrument vector `Image` asset
+//  without touching the peg-overlay logic, which stays live for color + taps.
 //
 
 import SwiftUI
@@ -20,7 +24,7 @@ struct HeadstockView: View {
 
     /// Note name to print on each peg, in string order (low → high).
     let stringNames: [String]
-    /// Peg positions for this instrument's headstock.
+    /// Peg positions for this instrument's headstock (normalized to the body).
     let layout: HeadstockLayout
     /// The string currently being tuned (peg to highlight), or nil.
     let activeStringIndex: Int?
@@ -31,35 +35,31 @@ struct HeadstockView: View {
     /// Called when a peg is tapped — lock onto that string.
     let onTapPeg: (Int) -> Void
 
-    /// Respect the user's Reduce Motion setting: when on, we skip the pulsing
-    /// highlight animation and just show the static highlighted state.
+    /// Respect Reduce Motion: when on we skip the pulsing highlight and show the
+    /// static highlighted state instead.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // `GeometryReader` hands us the actual pixel size so we can convert each
-        // peg's normalized (0...1) position into a real point.
+        // `GeometryReader` gives us the real size so each normalized peg position
+        // (and the silhouette and string lines) map into the SAME coordinate
+        // space — which is what makes the pegs sit exactly on the head.
         GeometryReader { geo in
             let size = geo.size
 
             ZStack {
-                // The headstock silhouette — a solid, tapered rounded shape.
-                HeadstockShape()
-                    .fill(GKColor.background)
-                    .overlay(
-                        HeadstockShape().stroke(
-                            GKColor.textSecondary.opacity(0.25),
-                            lineWidth: 1.5
-                        )
-                    )
+                // 1) The headstock silhouette (the swappable "art" layer).
+                headstockBody
 
-                // The nut: a small bar at the bottom where the strings leave the
-                // headstock. Purely decorative scene-setting.
+                // 2) The strings: thin lines fanning from the nut up to each peg.
+                stringLines(in: size)
+
+                // 3) The nut: a short bar where the strings leave the head.
                 Capsule()
-                    .fill(GKColor.textSecondary.opacity(0.35))
-                    .frame(width: size.width * 0.5, height: 6)
-                    .position(x: size.width * 0.5, y: size.height * 0.97)
+                    .fill(GKColor.textSecondary.opacity(0.55))
+                    .frame(width: size.width * 0.30, height: 5)
+                    .position(x: size.width * 0.5, y: size.height * 0.90)
 
-                // One peg per string, placed at its normalized position.
+                // 4) One peg per string, placed at its normalized position.
                 ForEach(layout.pegs.indices, id: \.self) { index in
                     let peg = layout.pegs[index]
                     PegView(
@@ -70,13 +70,55 @@ struct HeadstockView: View {
                         reduceMotion: reduceMotion
                     )
                     .position(x: peg.x * size.width, y: peg.y * size.height)
-                    // Tap anywhere on the peg to lock onto that string.
                     .onTapGesture { onTapPeg(index) }
                 }
             }
         }
-        // A portrait-ish aspect ratio so the headstock reads as a headstock.
-        .aspectRatio(0.62, contentMode: .fit)
+        // A tall, narrow aspect so the head reads as a head (taller than wide).
+        .aspectRatio(0.66, contentMode: .fit)
+    }
+
+    // MARK: - The silhouette (asset-swappable layer)
+
+    private var headstockBody: some View {
+        HeadstockShape()
+            // A subtle vertical gradient of two near-background shades reads as a
+            // faintly raised solid panel (still opaque — not glass).
+            .fill(
+                LinearGradient(
+                    colors: [
+                        GKColor.textPrimary.opacity(0.10),
+                        GKColor.textPrimary.opacity(0.03)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .background(HeadstockShape().fill(GKColor.background))
+            .overlay(
+                HeadstockShape().stroke(GKColor.textSecondary.opacity(0.45), lineWidth: 1.5)
+            )
+    }
+
+    // MARK: - Strings
+
+    /// Thin lines from a tight nut at the bottom fanning up to each peg — the cue
+    /// that ties the pegs to "where the string goes". Drawn beneath the pegs.
+    private func stringLines(in size: CGSize) -> some View {
+        Path { path in
+            let count = layout.pegs.count
+            guard count > 1 else { return }
+            let nutY = 0.90 * size.height
+            for i in layout.pegs.indices {
+                // Evenly spaced nut anchors across a narrow span at the bottom.
+                let frac = CGFloat(i) / CGFloat(count - 1)
+                let nutX = (0.38 + 0.24 * frac) * size.width
+                let peg = layout.pegs[i]
+                path.move(to: CGPoint(x: nutX, y: nutY))
+                path.addLine(to: CGPoint(x: peg.x * size.width, y: peg.y * size.height))
+            }
+        }
+        .stroke(GKColor.textSecondary.opacity(0.30), lineWidth: 1)
     }
 }
 
@@ -96,20 +138,17 @@ private struct PegView: View {
 
     var body: some View {
         ZStack {
-            // The peg body. Latched → green; active → tinted by zone; else quiet.
             Circle()
                 .fill(fillColor)
                 .overlay(Circle().strokeBorder(ringColor, lineWidth: isActive ? 3 : 1.5))
-                // The active peg subtly pulses to draw the eye — this is a MOTION
-                // cue for the active string that doesn't depend on color (helps
-                // colorblind users locate "the one I'm tuning"). Off under Reduce
-                // Motion, where the thicker ring + scale carry the meaning instead.
+                // Active peg subtly pulses — a MOTION cue for "the one I'm tuning"
+                // that doesn't depend on color (helps colorblind users). Off under
+                // Reduce Motion, where the thicker ring + scale carry the meaning.
                 .scaleEffect((isActive && pulse && !reduceMotion) ? 1.06 : 1.0)
 
-            // The label: the note name, or a check once latched.
             if isLatched {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.white)
             } else {
                 Text(name)
@@ -119,7 +158,7 @@ private struct PegView: View {
             }
         }
         // Active pegs sit slightly larger so the highlight reads without color.
-        .frame(width: isActive ? 52 : 44, height: isActive ? 52 : 44)
+        .frame(width: isActive ? 48 : 42, height: isActive ? 48 : 42)
         .animation(.easeOut(duration: 0.2), value: isActive)
         .animation(.easeOut(duration: 0.2), value: isLatched)
         .onAppear { startPulseIfNeeded() }
@@ -128,7 +167,6 @@ private struct PegView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// Begin (or stop) the repeating pulse depending on active state.
     private func startPulseIfNeeded() {
         guard isActive, !reduceMotion else { pulse = false; return }
         withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
@@ -146,13 +184,13 @@ private struct PegView: View {
             case nil:               return GKColor.accent.opacity(0.30)
             }
         }
-        return GKColor.textSecondary.opacity(0.15)
+        return GKColor.textSecondary.opacity(0.18)
     }
 
     private var ringColor: Color {
         if isLatched { return GKColor.inTune }
         if isActive { return GKColor.accent }
-        return GKColor.textSecondary.opacity(0.3)
+        return GKColor.textSecondary.opacity(0.35)
     }
 
     private var accessibilityLabel: String {
@@ -164,43 +202,44 @@ private struct PegView: View {
 
 // MARK: - The headstock outline shape
 
-/// A simple, stylized headstock silhouette: a vertically-tapered rounded shape,
-/// wider at the top (where the pegs fan out) and narrowing toward the nut. Drawn
-/// procedurally so it scales cleanly and reads as "headstock" without imitating
-/// any real wood grain or brand.
+/// A stylized 3+3 acoustic / Les-Paul "open-book" headstock: symmetric, widest
+/// near the top where the tuners sit, with a soft twin-hump top and a gentle
+/// center notch, tapering to a narrower nut at the bottom. Drawn procedurally so
+/// it scales cleanly and reads as "headstock" without imitating wood or a brand.
 struct HeadstockShape: Shape {
     func path(in rect: CGRect) -> Path {
+        // Helper: a point from normalized (0...1) fractions of the rect.
+        func p(_ fx: CGFloat, _ fy: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + fx * rect.width, y: rect.minY + fy * rect.height)
+        }
+
         var path = Path()
-        let w = rect.width
-        let h = rect.height
-        let corner = w * 0.18
 
-        // Slightly narrower at the bottom (toward the nut) than the top.
-        let topInset = w * 0.06
-        let bottomInset = w * 0.18
+        // Start at the nut, left corner, and trace clockwise.
+        path.move(to: p(0.32, 0.95))
 
-        // Four corner points of a tapered rectangle.
-        let topLeft = CGPoint(x: rect.minX + topInset, y: rect.minY)
-        let topRight = CGPoint(x: rect.maxX - topInset, y: rect.minY)
-        let bottomRight = CGPoint(x: rect.maxX - bottomInset, y: rect.maxY)
-        let bottomLeft = CGPoint(x: rect.minX + bottomInset, y: rect.maxY)
-        _ = h
+        // Left side: bulge outward through the middle up to the left shoulder.
+        path.addCurve(to: p(0.17, 0.13),
+                      control1: p(0.09, 0.66),
+                      control2: p(0.11, 0.28))
 
-        // Trace the outline with rounded corners via arcs/quad curves. Using
-        // `addRoundedRect`-style manual rounding keeps the taper.
-        path.move(to: CGPoint(x: topLeft.x + corner, y: topLeft.y))
-        path.addLine(to: CGPoint(x: topRight.x - corner, y: topRight.y))
-        path.addQuadCurve(to: CGPoint(x: topRight.x, y: topRight.y + corner),
-                          control: topRight)
-        path.addLine(to: CGPoint(x: bottomRight.x, y: bottomRight.y - corner))
-        path.addQuadCurve(to: CGPoint(x: bottomRight.x - corner, y: bottomRight.y),
-                          control: bottomRight)
-        path.addLine(to: CGPoint(x: bottomLeft.x + corner, y: bottomLeft.y))
-        path.addQuadCurve(to: CGPoint(x: bottomLeft.x, y: bottomLeft.y - corner),
-                          control: bottomLeft)
-        path.addLine(to: CGPoint(x: topLeft.x, y: topLeft.y + corner))
-        path.addQuadCurve(to: CGPoint(x: topLeft.x + corner, y: topLeft.y),
-                          control: topLeft)
+        // Top-left hump.
+        path.addQuadCurve(to: p(0.35, 0.05), control: p(0.23, 0.03))
+        // Center notch (the "open book" dip).
+        path.addQuadCurve(to: p(0.50, 0.11), control: p(0.43, 0.11))
+        // Top-right hump.
+        path.addQuadCurve(to: p(0.65, 0.05), control: p(0.57, 0.11))
+        // Right shoulder.
+        path.addQuadCurve(to: p(0.83, 0.13), control: p(0.77, 0.03))
+
+        // Right side: mirror of the left, down to the nut.
+        path.addCurve(to: p(0.68, 0.95),
+                      control1: p(0.89, 0.28),
+                      control2: p(0.91, 0.66))
+
+        // Nut edge: a slight concave-up curve back to the start.
+        path.addQuadCurve(to: p(0.32, 0.95), control: p(0.50, 0.985))
+
         path.closeSubpath()
         return path
     }
