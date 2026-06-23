@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  headstock-guitar.svg
+  A reference silhouette tracing GuitarKit's built-in 3+3 "open-book" headstock,
+  so the SVG pipeline can be tested and a designer can later swap in bespoke art.
+
+  COORDINATE SYSTEM: viewBox 660 x 1000 (width/height = 0.66, matching the
+  `aspectRatio` in Headstocks/guitar.json). The peg anchors in that JSON are
+  normalized to this same box, so the live peg dots land on the tuner posts.
+
+  The path control points are the exact `HeadstockShape` fractions scaled by the
+  viewBox (fx*660, fy*1000). Draw only the SILHOUETTE here — the pegs are drawn
+  live by the app and must not be baked in.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 1000" width="660" height="1000">
+  <defs>
+    <!-- A subtle vertical gradient so the head reads as a faintly raised panel
+         on the app's dark-first background. Solid stop-colors (no stop-opacity)
+         for the widest asset-catalog import compatibility. -->
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343C"/>
+      <stop offset="1" stop-color="#1B1B21"/>
+    </linearGradient>
+  </defs>
+
+  <path
+    d="M211.2,950
+       C59.4,660 72.6,280 112.2,130
+       Q151.8,30 231,50
+       Q283.8,110 330,110
+       Q376.2,110 429,50
+       Q508.2,30 547.8,130
+       C587.4,280 600.6,660 448.8,950
+       Q330,985 211.2,950 Z"
+    fill="url(#panel)"
+    stroke="#5A5A64"
+    stroke-width="4"/>
+</svg>
