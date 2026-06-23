@@ -19,16 +19,22 @@ struct RootView: View {
     /// nav so taps can change it. It starts on `.tuner` → tuner-first launch.
     @State private var selection: GKTool = .tuner
 
+    /// The app's global preferences, owned here at the shell so they live for the
+    /// whole app lifetime. We inject them into the environment so any tool (e.g.
+    /// the Tuner) can read them, and present the Settings screen from the gear.
+    @State private var settings = SettingsStore()
+
+    /// Whether the Settings sheet is showing.
+    @State private var showingSettings = false
+
     var body: some View {
         // `ZStack(alignment: .bottom)` layers the tool screen behind the nav,
         // pinning the nav to the bottom edge.
         ZStack(alignment: .bottom) {
 
             // THE TOOL SCREEN.
-            // For this foundation slice every tool shows the shared
-            // placeholder. We `switch` over the selection so later slices can
-            // swap each case for the real screen (`TunerView()`, etc.) one at a
-            // time. The `switch` is exhaustive, so the compiler will remind us
+            // We `switch` over the selection so each tool can show its real
+            // screen. The `switch` is exhaustive, so the compiler will remind us
             // if we ever add a tool and forget to give it a screen.
             currentToolScreen
                 // A cross-fade when the selected tool changes keeps screen
@@ -45,6 +51,38 @@ struct RootView: View {
                 // reaches up into the content.
                 .padding(.bottom, 4)
         }
+        // The Settings gear, floating in the top-trailing corner above the tool.
+        .overlay(alignment: .topTrailing) { settingsButton }
+        // Make the global preferences available to every tool below us.
+        .environment(settings)
+        // Force the user's chosen appearance (or follow the system when `.system`).
+        .preferredColorScheme(settings.theme.colorScheme)
+        // Present Settings as a sheet wrapped in its own navigation container.
+        .sheet(isPresented: $showingSettings) {
+            NavigationStack {
+                SettingsView(store: settings)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingSettings = false }
+                        }
+                    }
+            }
+        }
+    }
+
+    /// The corner gear button that opens Settings.
+    private var settingsButton: some View {
+        Button {
+            showingSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(GKColor.textSecondary)
+                .padding(12)
+        }
+        .accessibilityLabel("Settings")
+        .padding(.top, 8)
+        .padding(.trailing, 4)
     }
 
     /// The screen for the currently selected tool. Pulled into a computed
@@ -69,6 +107,21 @@ struct RootView: View {
             ToolPlaceholderView(tool: .chords)
         case .scales:
             ToolPlaceholderView(tool: .scales)
+        }
+    }
+}
+
+// MARK: - Theme → ColorScheme
+
+private extension AppTheme {
+    /// Map the persisted theme to SwiftUI's optional `ColorScheme`, which is what
+    /// `.preferredColorScheme` wants: `.system` follows the device (`nil`), while
+    /// `.light`/`.dark` force their scheme.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light:  return .light
+        case .dark:   return .dark
         }
     }
 }

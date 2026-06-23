@@ -116,4 +116,54 @@ final class HeroSnapshotGenerator: XCTestCase {
                 .frame(width: 260, height: 440)
         }
     }
+
+    // MARK: - #09: per-instrument heads
+
+    /// Renders the headstock for several instruments side by side — visual proof
+    /// that per-instrument peg layouts (incl. the banjo 5th peg and violin 2+2
+    /// pegbox) load from their JSONs and place correctly.
+    func test_generateInstrumentHeadsImage() throws {
+        func model(_ instrument: Instrument) -> TuningSessionModel {
+            let m = TuningSessionModel(haptics: SilentHaptics())
+            m.select(instrument: instrument)
+            return m
+        }
+
+        let grid = HStack(alignment: .top, spacing: 16) {
+            labeled("Guitar", model(InstrumentLibrary.guitar6))
+            labeled("Bass (4)", model(InstrumentLibrary.bass4))
+            labeled("Ukulele", model(InstrumentLibrary.ukulele))
+            labeled("Banjo (5)", model(InstrumentLibrary.banjo5))
+            labeled("Violin", model(InstrumentLibrary.violin))
+        }
+        .padding(28)
+        .background(GKColor.background)
+        .environment(\.colorScheme, .dark)
+        .frame(width: 1460, height: 540)
+
+        try render(grid, to: "instrument-heads.png")
+    }
+
+    // NOTE: no Settings snapshot — `ImageRenderer` can't rasterize `Form`/`List`/
+    // `NavigationStack` (they're UIKit-backed), so it yields a broken placeholder.
+    // The Settings screen is covered by SettingsStoreTests + the SettingsView
+    // Xcode preview instead.
+
+    // MARK: - Render helper
+
+    /// Render a view to a PNG in <repo>/.snapshots/<name>.
+    private func render(_ view: some View, to name: String) throws {
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        guard let image = renderer.uiImage, let png = image.pngData() else {
+            return XCTFail("Failed to render \(name)")
+        }
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let dir = repoRoot.appendingPathComponent(".snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try png.write(to: dir.appendingPathComponent(name))
+    }
 }

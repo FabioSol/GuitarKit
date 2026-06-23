@@ -50,6 +50,12 @@ struct TunerView: View {
     /// they may have just granted the mic) we re-check permission and start audio.
     @Environment(\.scenePhase) private var scenePhase
 
+    /// The global preferences, supplied by the app shell. Declared OPTIONAL so the
+    /// view still works in previews where no store is injected — we just fall back
+    /// to defaults. When present, reference pitch / sensitivity / haptics flow into
+    /// the tuning session.
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
+
     // MARK: Body
 
     var body: some View {
@@ -77,13 +83,19 @@ struct TunerView: View {
         .onChange(of: permission.state) { _, newState in
             syncEngine(to: newState)
         }
-        // On first appearance, if we already have permission (returning user),
-        // start capturing immediately so the meter is live.
+        // On first appearance, apply the user's settings to the session, and if we
+        // already have permission (returning user), start capturing immediately.
         .task {
+            applySettings()
             if !shouldShowPriming {
                 syncEngine(to: permission.state)
             }
         }
+        // Live-apply settings changes: recalibration (reference pitch), in-tune
+        // sensitivity, and the haptics toggle all take effect immediately.
+        .onChange(of: settings?.referencePitchHz) { _, _ in applySettings() }
+        .onChange(of: settings?.inTuneSensitivity) { _, _ in applySettings() }
+        .onChange(of: settings?.hapticsEnabled) { _, _ in applySettings() }
         // Re-check permission when the app becomes active again (e.g. returning
         // from Settings after flipping the mic toggle). `.onChange` of scenePhase
         // is the standard place to react to foreground/background transitions.
@@ -150,6 +162,22 @@ struct TunerView: View {
         Task {
             await permission.request()
         }
+    }
+
+    /// Push the user's global preferences into the tuning session: A4 reference
+    /// pitch, the in-tune sensitivity window, and the haptics toggle. No-op when
+    /// no store is injected (e.g. previews) — the session keeps its defaults.
+    private func applySettings() {
+        guard let settings else { return }
+        session.reconfigure(
+            referencePitch: ReferencePitch(hertz: settings.referencePitchHz),
+            tolerance: TuningTolerance(
+                inTuneCents: settings.inTuneSensitivity.centsTolerance,
+                perfectCents: 1,
+                holdDuration: 0.7
+            )
+        )
+        session.hapticsEnabled = settings.hapticsEnabled
     }
 
     /// Start or stop the audio engine to match the permission state.

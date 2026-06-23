@@ -40,9 +40,19 @@ final class TuningSessionModel {
     /// `tuningFeedbackEvent(...)` + the session's latch/complete signals below.
     @ObservationIgnored private let haptics: TuningHapticsProviding
 
-    /// Whether haptics are on. Defaults to true; the Settings slice (#22) wires
-    /// this to the user's Feedback preference.
+    /// Whether haptics are on. Defaults to true; the Settings screen wires this
+    /// to the user's Feedback preference.
     @ObservationIgnored var hapticsEnabled = true
+
+    // MARK: Current instrument / tuning context
+
+    /// Derives target frequencies from the active reference pitch + temperament.
+    /// Rebuilt when the user recalibrates reference pitch (see `reconfigure`).
+    @ObservationIgnored private var calculator: PitchCalculator
+
+    /// The in-tune thresholds + hold timing in force. Rebuilt when the user
+    /// changes the in-tune sensitivity.
+    @ObservationIgnored private var tolerance: TuningTolerance
 
     // MARK: Transition tracking (to fire each event exactly once)
 
@@ -57,15 +67,17 @@ final class TuningSessionModel {
     // MARK: Init
 
     /// - Parameters:
-    ///   - tuning: open-string notes (low → high). Defaults to standard guitar
-    ///     until the Instruments/Presets slice (#09) supplies real ones.
-    ///   - calculator: tuning context (reference pitch, temperament) used to
-    ///     derive each string's target frequency.
-    ///   - tolerance: thresholds/timing (dev-config).
+    ///   - instrument: which instrument to tune. Defaults to the library's
+    ///     cold-start default (standard guitar).
+    ///   - tuning: which preset to target. Defaults to the instrument's home tuning.
+    ///   - referencePitch: A4 calibration (from Settings). Defaults to 440.
+    ///   - tolerance: in-tune thresholds + hold timing. Defaults to `.standard`.
     ///   - now: clock source (injectable).
+    ///   - haptics: feedback producer (injectable; silent fake for tests/previews).
     init(
-        tuning: [Note]? = nil,
-        calculator: PitchCalculator? = nil,
+        instrument: Instrument? = nil,
+        tuning: Tuning? = nil,
+        referencePitch: ReferencePitch? = nil,
         tolerance: TuningTolerance? = nil,
         now: @escaping () -> TimeInterval = { CACurrentMediaTime() },
         haptics: TuningHapticsProviding? = nil
@@ -73,13 +85,23 @@ final class TuningSessionModel {
         // Resolve the pure-value defaults HERE inside the @MainActor init. As
         // default *arguments* these would be evaluated in a non-isolated context
         // and warn, because this project defaults types to main-actor isolation.
-        let tuning = tuning ?? BuiltInTuning.standardGuitar
-        let calculator = calculator ?? PitchCalculator()
+        let instrument = instrument ?? InstrumentLibrary.default
+        // Fall back to the instrument's home tuning, then to an empty placeholder
+        // (never expected — every shipped instrument has tunings).
+        let tuning = tuning ?? instrument.defaultTuning
+            ?? Tuning(name: "Standard", category: .standard, strings: [])
+        let calculator = PitchCalculator(referenceA: referencePitch ?? .standard)
         let tolerance = tolerance ?? .standard
 
+        self.currentInstrument = instrument
+        self.currentTuning = tuning
+        self.calculator = calculator
+        self.tolerance = tolerance
+        self.headstockSpec = Self.spec(for: instrument)
+
         // Derive a target (note + frequency) for every open string, in order.
-        let targets = calculator.targets(for: tuning)
-        self.session = TuningSession(targets: targets, tolerance: tolerance)
+        self.session = TuningSession(targets: calculator.targets(for: tuning.strings),
+                                     tolerance: tolerance)
         self.now = now
         // Default to the real device-backed haptics. We build it HERE (inside the
         // @MainActor init) rather than as a default argument, because default
@@ -134,20 +156,72 @@ final class TuningSessionModel {
         session.lock(toStringIndex: index)
     }
 
-    /// Start a brand-new session over the same tuning (e.g. on re-entering the
+    /// Start a brand-new session over the current tuning (e.g. on re-entering the
     /// Tuner) — clears all latches and live state.
     func reset() {
-        session = TuningSession(targets: session.targets, tolerance: session.tolerance)
+        rebuildSession()
+    }
+
+    // MARK: Instrument / tuning selection
+
+    /// Switch to a different instrument (and optionally a specific preset). This
+    /// re-renders the headstock (new peg layout/art) and retargets detection to
+    /// the new strings — the picker (#10) calls this.
+    func select(instrument: Instrument, tuning: Tuning? = nil) {
+        currentInstrument = instrument
+        currentTuning = tuning ?? instrument.defaultTuning ?? currentTuning
+        headstockSpec = Self.spec(for: instrument)
+        rebuildSession()
+    }
+
+    /// Switch to a different preset on the SAME instrument (headstock unchanged,
+    /// targets retargeted).
+    func select(tuning: Tuning) {
+        currentTuning = tuning
+        rebuildSession()
+    }
+
+    /// Apply Settings-driven calibration: A4 reference pitch + in-tune tolerance.
+    /// Rebuilds the targets so the change takes effect immediately.
+    func reconfigure(referencePitch: ReferencePitch, tolerance: TuningTolerance) {
+        calculator = PitchCalculator(referenceA: referencePitch)
+        self.tolerance = tolerance
+        rebuildSession()
+    }
+
+    /// Rebuild the pure session from the current tuning + calculator + tolerance,
+    /// clearing latches and the haptic edge-tracking. The single place targets are
+    /// (re)derived, so every selection/reconfigure path stays consistent.
+    private func rebuildSession() {
+        session = TuningSession(
+            targets: calculator.targets(for: currentTuning.strings),
+            tolerance: tolerance
+        )
         previousZone = nil
         wasComplete = false
     }
 
+    /// Resolve an instrument's headstock spec from its bundled JSON, falling back
+    /// to a generic procedural layout (so a missing/!decodable JSON never renders
+    /// an empty head).
+    private static func spec(for instrument: Instrument) -> HeadstockSpec {
+        HeadstockSpec.load(instrument.headstockSpecName)
+            ?? HeadstockSpec(
+                artAsset: nil,
+                aspectRatio: 0.66,
+                pegs: HeadstockLayout.generic(stringCount: instrument.stringCount).pegs
+            )
+    }
+
     // MARK: Outputs (forwarded for the view)
 
+    /// The active instrument and tuning (observed, so the UI updates on select).
+    private(set) var currentInstrument: Instrument
+    private(set) var currentTuning: Tuning
+
     /// The headstock description for the active instrument (art + peg anchors).
-    /// Standard guitar for now; the Instruments slice (#09) makes this vary per
-    /// selected instrument. Loaded from the bundled JSON, procedural fallback.
-    let headstockSpec: HeadstockSpec = .standardGuitar
+    /// Updated by `select(instrument:)`, so the hero re-renders per instrument.
+    private(set) var headstockSpec: HeadstockSpec
 
     /// All string targets, in order, for rendering the indicator row.
     var targets: [PitchTarget] { session.targets }
