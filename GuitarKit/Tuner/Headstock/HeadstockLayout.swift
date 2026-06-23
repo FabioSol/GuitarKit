@@ -32,20 +32,19 @@ struct HeadstockLayout: Equatable {
     /// Standard 6-string guitar: a "3 + 3" headstock — three pegs down the left
     /// side, three down the right.
     ///
-    /// MAPPING TO A REAL GUITAR (held facing you, headstock up):
-    /// the three low strings (E, A, D) tune on the left; the three high strings
-    /// (G, B, E) on the right. We place them top→bottom on the left and
-    /// bottom→top on the right, which traces the natural order your eye follows
-    /// from the thick low-E around to the thin high-E.
+    /// MAPPING TO A REAL GUITAR (nut at the bottom, headstock pointing up):
+    /// the eye traces the strings as a loop — the low E sits BOTTOM-LEFT (nearest
+    /// the nut on the bass side), up the left side (A, D), then across the top and
+    /// back DOWN the right side (G, B, high E), so the high E lands BOTTOM-RIGHT.
     // Peg x-columns (0.24 / 0.76) hug the tuner-post positions on the sides of
     // `HeadstockShape`; the three y-rows are evenly spaced down each side.
     static let standardGuitar = HeadstockLayout(pegs: [
-        PegPosition(x: 0.24, y: 0.25),   // 0 low E  — left, top
+        PegPosition(x: 0.24, y: 0.67),   // 0 low E  — left, bottom
         PegPosition(x: 0.24, y: 0.46),   // 1 A      — left, middle
-        PegPosition(x: 0.24, y: 0.67),   // 2 D      — left, bottom
-        PegPosition(x: 0.76, y: 0.67),   // 3 G      — right, bottom
+        PegPosition(x: 0.24, y: 0.25),   // 2 D      — left, top
+        PegPosition(x: 0.76, y: 0.25),   // 3 G      — right, top
         PegPosition(x: 0.76, y: 0.46),   // 4 B      — right, middle
-        PegPosition(x: 0.76, y: 0.25)    // 5 high E — right, top
+        PegPosition(x: 0.76, y: 0.67)    // 5 high E — right, bottom
     ])
 
     /// Best-effort layout for an arbitrary string count, so the hero still draws
