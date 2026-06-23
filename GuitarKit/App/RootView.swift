@@ -54,7 +54,10 @@ struct RootView: View {
     private var currentToolScreen: some View {
         switch selection {
         case .tuner:
-            ToolPlaceholderView(tool: .tuner)
+            // The Tuner is the first real tool. It owns mic priming, permission,
+            // audio capture, and (for now) a live input-level meter. Other tools
+            // still show the shared placeholder until their slices land.
+            TunerView()
         case .metronome:
             ToolPlaceholderView(tool: .metronome)
         case .circleOfFifths:
