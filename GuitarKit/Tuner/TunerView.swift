@@ -35,10 +35,23 @@ struct TunerView: View {
     /// the same audio, then feed its readings into the tuning session below.
     @State private var detector = MPMPitchDetector()
 
-    /// The targeted tuning session (standard guitar for now; instrument/preset
-    /// selection arrives in slice #09). Each detector reading is fed in, and it
-    /// drives the per-string in-tune logic the UI renders.
+    /// The targeted tuning session. Each detector reading is fed in, and it drives
+    /// the per-string in-tune logic the UI renders.
     @State private var session = TuningSessionModel()
+
+    /// The tone generator (tap a peg in tone-mode to hear its target pitch) and
+    /// the session coordinator that flips record↔playback around it.
+    @State private var toneGenerator = ToneGenerator()
+    @State private var coordinator = AudioSessionCoordinator()
+
+    /// Whether the headstock is in tone-mode. In tone-mode detection is paused
+    /// (mic off, session → playback) and tapping a peg plays instead of locks.
+    @State private var isToneMode = false
+
+    /// The picker's persistent memory (last-used instrument/tuning + usage counts)
+    /// and whether the picker sheet is showing.
+    @State private var selection = InstrumentSelectionStore()
+    @State private var showingPicker = false
 
     /// Whether the user has already seen the first-run priming screen. We read
     /// the persisted flag once into view state, then flip it when priming
@@ -83,9 +96,10 @@ struct TunerView: View {
         .onChange(of: permission.state) { _, newState in
             syncEngine(to: newState)
         }
-        // On first appearance, apply the user's settings to the session, and if we
-        // already have permission (returning user), start capturing immediately.
+        // On first appearance, restore the last-used instrument/tuning, apply the
+        // user's settings, and (if a returning user) start capturing immediately.
         .task {
+            restoreSelection()
             applySettings()
             if !shouldShowPriming {
                 syncEngine(to: permission.state)
@@ -117,25 +131,90 @@ struct TunerView: View {
         ZStack {
             backdrop
 
-            VStack(spacing: 24) {
-                // The hero: headstock + cents meter + completion flourish.
-                TunerHeroView(model: session)
+            VStack(spacing: 20) {
+                // Top-left: the instrument/tuning selector pill (opens the picker).
+                // Kept left so it never collides with the shell's top-right gear.
+                HStack {
+                    InstrumentSelectorPill(
+                        instrumentName: session.currentInstrument.name,
+                        tuningName: session.currentTuning.name,
+                        action: { showingPicker = true }
+                    )
+                    Spacer()
+                }
 
-                // Keep the level meter as a small secondary indicator — handy
-                // while developing detection (you can see signal even when no
-                // confident pitch is found yet).
-                InputLevelMeter(level: engine.level)
-                    .padding(.horizontal, 40)
+                // The hero: headstock + cents meter (or tone hint) + flourish.
+                TunerHeroView(
+                    model: session,
+                    isToneMode: isToneMode,
+                    playingStringIndex: playingStringIndex,
+                    onTapPeg: handlePegTap
+                )
+
+                // The face controls: capo chip + tone-mode toggle.
+                HStack(spacing: 16) {
+                    CapoControlView(
+                        capo: session.capo,
+                        onIncrement: session.incrementCapo,
+                        onReset: session.resetCapo
+                    )
+                    toneModeToggle
+                }
+
+                // The level meter, a secondary "is sound getting in?" signal.
+                // Hidden in tone-mode (the mic is off then).
+                if !isToneMode {
+                    InputLevelMeter(level: engine.level)
+                        .padding(.horizontal, 40)
+                }
             }
             .padding()
         }
-        // Drive the session from the detector: each new reading is fed in with
-        // the current time so the hold-to-latch logic advances. `.onChange`
-        // fires on every published reading (the mic naturally varies it ~10×/s).
+        // Drive the session from the detector — but ONLY in tuning mode. In tone-
+        // mode the mic is off and we don't want the tuner reacting to its own tone.
         .onChange(of: detector.reading) { _, reading in
+            guard !isToneMode else { return }
             session.ingest(reading)
         }
+        // Entering/leaving tone-mode flips the audio path (see syncToneMode).
+        .onChange(of: isToneMode) { _, on in
+            syncToneMode(on)
+        }
+        // The instrument/tuning picker.
+        .sheet(isPresented: $showingPicker) {
+            InstrumentPickerView(
+                selectedInstrument: session.currentInstrument,
+                selectedTuning: session.currentTuning,
+                mostUsedInstrumentIDs: selection.mostUsedInstrumentIDs(limit: 3),
+                onSelect: { instrument, tuning in
+                    session.select(instrument: instrument, tuning: tuning)
+                    selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
+                },
+                onCreateCustom: { /* custom tuning editor — slice #12 */ }
+            )
+        }
         .ignoresSafeArea()
+    }
+
+    /// The tone-mode toggle button (a speaker icon that fills when active).
+    private var toneModeToggle: some View {
+        Button {
+            isToneMode.toggle()
+        } label: {
+            Image(systemName: isToneMode ? "speaker.wave.2.fill" : "speaker.wave.2")
+                .font(.footnote)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background {
+                    Capsule().fill(isToneMode
+                        ? GKColor.accent.opacity(0.18)
+                        : GKColor.textSecondary.opacity(0.12))
+                }
+                .foregroundStyle(isToneMode ? GKColor.accent : GKColor.textSecondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isToneMode ? "Tone mode on" : "Tone mode off")
+        .accessibilityHint("Tap a peg to hear its pitch")
     }
 
     // MARK: Logic
@@ -161,6 +240,50 @@ struct TunerView: View {
         // if we were granted.
         Task {
             await permission.request()
+        }
+    }
+
+    /// Restore the player's last-used instrument + tuning (persisted on-device),
+    /// so the Tuner reopens where they left off instead of cold-starting on guitar.
+    private func restoreSelection() {
+        let instrument = selection.restoredInstrument()
+        session.select(instrument: instrument, tuning: selection.restoredTuning(for: instrument))
+    }
+
+    /// Route a peg tap: in tone-mode play that string's target pitch; otherwise
+    /// lock onto it for tuning.
+    private func handlePegTap(_ index: Int) {
+        guard session.targets.indices.contains(index) else { return }
+        if isToneMode {
+            toneGenerator.play(frequencyHz: session.targets[index].frequencyHz)
+        } else {
+            session.lock(toStringIndex: index)
+        }
+    }
+
+    /// Which peg is currently sounding — the target whose frequency matches the
+    /// tone generator's. Drives the headstock highlight in tone-mode.
+    private var playingStringIndex: Int? {
+        guard let hz = toneGenerator.currentFrequencyHz else { return nil }
+        return session.targets.firstIndex { abs($0.frequencyHz - hz) < 0.01 }
+    }
+
+    /// Flip the audio path when tone-mode toggles. Entering: stop the mic +
+    /// detection and switch the session to playback so tones are audible (even on
+    /// the silent switch). Leaving: stop the tone and resume detection (the mic
+    /// engine re-asserts the record session itself on start).
+    private func syncToneMode(_ on: Bool) {
+        if on {
+            engine.stop()
+            detector.reset()
+            do {
+                try coordinator.configureForPlayback()
+            } catch {
+                print("AudioSession playback configuration failed: \(error)")
+            }
+        } else {
+            toneGenerator.shutdown()
+            syncEngine(to: permission.state)
         }
     }
 
@@ -199,9 +322,12 @@ struct TunerView: View {
         case .denied, .undetermined:
             engine.stop()
             // Clear any lingering reading + session state so nothing stale hangs
-            // on screen and a fresh session starts clean next time.
+            // on screen and a fresh session starts clean next time. Also tear down
+            // the tone generator + release the audio session.
             detector.reset()
             session.reset()
+            toneGenerator.shutdown()
+            coordinator.deactivate()
         }
     }
 

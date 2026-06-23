@@ -17,6 +17,17 @@ struct TunerHeroView: View {
     /// the view re-render as tuning progresses.
     let model: TuningSessionModel
 
+    /// Whether the headstock is in TONE mode (tap a peg to hear its pitch) rather
+    /// than tuning mode. Defaults false so previews/snapshots stay simple.
+    var isToneMode: Bool = false
+
+    /// In tone mode, which peg is currently sounding (highlighted), or nil.
+    var playingStringIndex: Int? = nil
+
+    /// What to do when a peg is tapped. The parent routes this to either lock-to-
+    /// tune (tuning mode) or play-the-pitch (tone mode). Default no-op for previews.
+    var onTapPeg: (Int) -> Void = { _ in }
+
     /// Reduce Motion → the completion flourish degrades to a plain state change
     /// (no scale/glow animation), per the PRD accessibility requirement.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,23 +37,28 @@ struct TunerHeroView: View {
 
     var body: some View {
         VStack(spacing: 28) {
-            // THE HEADSTOCK HERO. A pure function of model state; tapping a peg
-            // locks onto that string.
+            // THE HEADSTOCK HERO. In tuning mode the active peg + zone come from
+            // the session; in tone mode they reflect which peg is sounding (and
+            // we suppress the latched-green + tuning colors).
             HeadstockView(
                 stringNames: model.targets.map(\.note.name),
                 spec: model.headstockSpec,
-                activeStringIndex: model.activeStringIndex,
-                zone: model.zone,
-                isLatched: model.isLatched,
-                onTapPeg: { model.lock(toStringIndex: $0) }
+                activeStringIndex: isToneMode ? playingStringIndex : model.activeStringIndex,
+                zone: isToneMode ? nil : model.zone,
+                isLatched: isToneMode ? { _ in false } : model.isLatched,
+                onTapPeg: onTapPeg
             )
             .frame(maxHeight: 320)
             // The whole hero gently scales up on completion as the flourish.
             .scaleEffect(celebrate && !reduceMotion ? 1.03 : 1.0)
 
-            // Below the head: the completion banner once done (so you still SEE
-            // all six green pegs), otherwise the deviation meter + next nudge.
-            if model.isComplete {
+            // Below the head: in tone mode a simple hint; otherwise the completion
+            // banner (so you still SEE all green pegs) or the deviation meter + nudge.
+            if isToneMode {
+                Text("Tap a peg to hear its pitch")
+                    .font(GKFont.caption)
+                    .foregroundStyle(GKColor.textSecondary)
+            } else if model.isComplete {
                 completionBanner
             } else {
                 CentsMeterView(cents: model.deviationCents, zone: model.zone)

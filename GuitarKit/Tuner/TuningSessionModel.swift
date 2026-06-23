@@ -100,7 +100,8 @@ final class TuningSessionModel {
         self.headstockSpec = Self.spec(for: instrument)
 
         // Derive a target (note + frequency) for every open string, in order.
-        self.session = TuningSession(targets: calculator.targets(for: tuning.strings),
+        // Cold start has no capo (`.none`); later changes flow through rebuildSession.
+        self.session = TuningSession(targets: calculator.targets(for: tuning.strings, capo: .none),
                                      tolerance: tolerance)
         self.now = now
         // Default to the real device-backed haptics. We build it HERE (inside the
@@ -189,12 +190,30 @@ final class TuningSessionModel {
         rebuildSession()
     }
 
-    /// Rebuild the pure session from the current tuning + calculator + tolerance,
-    /// clearing latches and the haptic edge-tracking. The single place targets are
-    /// (re)derived, so every selection/reconfigure path stays consistent.
+    // MARK: Capo
+
+    /// Raise the capo by one fret (clamped 0...12 by `Capo`), shifting every
+    /// target up a semitone and retargeting detection. The headstock peg names
+    /// automatically show the capo-shifted notes (they read `PitchTarget.note`,
+    /// which the calculator already transposes by the capo).
+    func incrementCapo() {
+        capo = Capo(fret: capo.fret + 1)
+        rebuildSession()
+    }
+
+    /// Clear the capo back to none.
+    func resetCapo() {
+        capo = .none
+        rebuildSession()
+    }
+
+    /// Rebuild the pure session from the current tuning + calculator + tolerance
+    /// + capo, clearing latches and the haptic edge-tracking. The single place
+    /// targets are (re)derived, so every selection/reconfigure/capo path stays
+    /// consistent.
     private func rebuildSession() {
         session = TuningSession(
-            targets: calculator.targets(for: currentTuning.strings),
+            targets: calculator.targets(for: currentTuning.strings, capo: capo),
             tolerance: tolerance
         )
         previousZone = nil
@@ -222,6 +241,10 @@ final class TuningSessionModel {
     /// The headstock description for the active instrument (art + peg anchors).
     /// Updated by `select(instrument:)`, so the hero re-renders per instrument.
     private(set) var headstockSpec: HeadstockSpec
+
+    /// The active capo (semitone shift of every target). Observed so the capo
+    /// chip re-renders; mutated only via `incrementCapo()`/`resetCapo()`.
+    private(set) var capo: Capo = .none
 
     /// All string targets, in order, for rendering the indicator row.
     var targets: [PitchTarget] { session.targets }
