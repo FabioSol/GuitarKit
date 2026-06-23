@@ -86,7 +86,7 @@ private struct GKGlassModifier: ViewModifier {
                     shape.fill(GKColor.background)
                 )
                 .overlay(
-                    shape.strokeBorder(GKColor.textSecondary.opacity(0.3), lineWidth: 1)
+                    shape.stroke(GKColor.textSecondary.opacity(0.3), lineWidth: 1)
                 )
         } else {
             // NORMAL PATH: real Liquid Glass.
