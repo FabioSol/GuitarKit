@@ -16,8 +16,9 @@
 
 import CoreGraphics
 
-/// One peg's normalized position on the headstock.
-struct PegPosition: Equatable {
+/// One peg's normalized position on the headstock. `Codable` so peg anchors can
+/// be authored externally in a designer-facing JSON (see `HeadstockSpec`).
+struct PegPosition: Equatable, Codable {
     /// 0 (left edge) … 1 (right edge).
     let x: CGFloat
     /// 0 (top edge) … 1 (bottom edge).

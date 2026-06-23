@@ -144,6 +144,11 @@ final class TuningSessionModel {
 
     // MARK: Outputs (forwarded for the view)
 
+    /// The headstock description for the active instrument (art + peg anchors).
+    /// Standard guitar for now; the Instruments slice (#09) makes this vary per
+    /// selected instrument. Loaded from the bundled JSON, procedural fallback.
+    let headstockSpec: HeadstockSpec = .standardGuitar
+
     /// All string targets, in order, for rendering the indicator row.
     var targets: [PitchTarget] { session.targets }
     /// The string currently being tuned, if any.

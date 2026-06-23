@@ -30,7 +30,7 @@ struct TunerHeroView: View {
             // locks onto that string.
             HeadstockView(
                 stringNames: model.targets.map(\.note.name),
-                layout: headstockLayout,
+                spec: model.headstockSpec,
                 activeStringIndex: model.activeStringIndex,
                 zone: model.zone,
                 isLatched: model.isLatched,
@@ -91,14 +91,6 @@ struct TunerHeroView: View {
         .accessibilityLabel("All strings in tune")
     }
 
-    // MARK: - Layout selection
-
-    /// The peg layout for the current tuning. Standard guitar gets its real 3+3
-    /// arrangement; anything else falls back to the generic two-column layout
-    /// until #09 supplies per-instrument layouts.
-    private var headstockLayout: HeadstockLayout {
-        model.targets.count == 6 ? .standardGuitar : .generic(stringCount: model.targets.count)
-    }
 }
 
 // MARK: - Previews

@@ -24,8 +24,9 @@ struct HeadstockView: View {
 
     /// Note name to print on each peg, in string order (low → high).
     let stringNames: [String]
-    /// Peg positions for this instrument's headstock (normalized to the body).
-    let layout: HeadstockLayout
+    /// The head description: art source, aspect ratio, and peg anchors. Authored
+    /// externally (designer SVG + JSON) and decoded into `HeadstockSpec`.
+    let spec: HeadstockSpec
     /// The string currently being tuned (peg to highlight), or nil.
     let activeStringIndex: Int?
     /// The current tuning zone of the active string (drives the highlight color).
@@ -60,8 +61,8 @@ struct HeadstockView: View {
                     .position(x: size.width * 0.5, y: size.height * 0.90)
 
                 // 4) One peg per string, placed at its normalized position.
-                ForEach(layout.pegs.indices, id: \.self) { index in
-                    let peg = layout.pegs[index]
+                ForEach(spec.pegs.indices, id: \.self) { index in
+                    let peg = spec.pegs[index]
                     PegView(
                         name: index < stringNames.count ? stringNames[index] : "",
                         isActive: activeStringIndex == index,
@@ -74,30 +75,41 @@ struct HeadstockView: View {
                 }
             }
         }
-        // A tall, narrow aspect so the head reads as a head (taller than wide).
-        .aspectRatio(0.66, contentMode: .fit)
+        // Aspect ratio comes from the spec so each instrument reserves the right
+        // shape (taller than wide for a guitar).
+        .aspectRatio(spec.aspectRatio, contentMode: .fit)
     }
 
     // MARK: - The silhouette (asset-swappable layer)
 
+    /// The head art. If the spec names an asset (a designer's imported SVG) we
+    /// render that; otherwise we draw the built-in procedural shape. Pegs overlay
+    /// on top either way.
+    @ViewBuilder
     private var headstockBody: some View {
-        HeadstockShape()
-            // A subtle vertical gradient of two near-background shades reads as a
-            // faintly raised solid panel (still opaque — not glass).
-            .fill(
-                LinearGradient(
-                    colors: [
-                        GKColor.textPrimary.opacity(0.10),
-                        GKColor.textPrimary.opacity(0.03)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
+        if let art = spec.artAsset {
+            Image(art)
+                .resizable()
+                .scaledToFit()
+        } else {
+            HeadstockShape()
+                // A subtle vertical gradient of two near-background shades reads as
+                // a faintly raised solid panel (still opaque — not glass).
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            GKColor.textPrimary.opacity(0.10),
+                            GKColor.textPrimary.opacity(0.03)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 )
-            )
-            .background(HeadstockShape().fill(GKColor.background))
-            .overlay(
-                HeadstockShape().stroke(GKColor.textSecondary.opacity(0.45), lineWidth: 1.5)
-            )
+                .background(HeadstockShape().fill(GKColor.background))
+                .overlay(
+                    HeadstockShape().stroke(GKColor.textSecondary.opacity(0.45), lineWidth: 1.5)
+                )
+        }
     }
 
     // MARK: - Strings
@@ -106,14 +118,14 @@ struct HeadstockView: View {
     /// that ties the pegs to "where the string goes". Drawn beneath the pegs.
     private func stringLines(in size: CGSize) -> some View {
         Path { path in
-            let count = layout.pegs.count
+            let count = spec.pegs.count
             guard count > 1 else { return }
             let nutY = 0.90 * size.height
-            for i in layout.pegs.indices {
+            for i in spec.pegs.indices {
                 // Evenly spaced nut anchors across a narrow span at the bottom.
                 let frac = CGFloat(i) / CGFloat(count - 1)
                 let nutX = (0.38 + 0.24 * frac) * size.width
-                let peg = layout.pegs[i]
+                let peg = spec.pegs[i]
                 path.move(to: CGPoint(x: nutX, y: nutY))
                 path.addLine(to: CGPoint(x: peg.x * size.width, y: peg.y * size.height))
             }
