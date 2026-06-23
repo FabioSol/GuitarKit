@@ -58,7 +58,10 @@ struct RootView: View {
         case .metronome:
             ToolPlaceholderView(tool: .metronome)
         case .circleOfFifths:
-            ToolPlaceholderView(tool: .circleOfFifths)
+            // The real Circle-of-Fifths explorer (slice #18) replaces the
+            // placeholder. It owns its own `@State` view model, so its selection
+            // is preserved while the app runs even as we navigate away and back.
+            CircleOfFifthsView()
         case .chords:
             ToolPlaceholderView(tool: .chords)
         case .scales:
