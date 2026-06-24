@@ -66,12 +66,14 @@ struct HeadstockLayout: Equatable {
         let rightYs = columnYs(stringCount - perSide)
 
         var pegs: [PegPosition] = []
-        // Left column top→bottom for the low strings…
-        for i in 0..<perSide {
-            pegs.append(PegPosition(x: 0.24, y: leftYs[i]))
+        // Mirror the guitar convention: the LOW strings climb the left column
+        // BOTTOM→TOP (so the lowest string sits bottom-left)…
+        for y in leftYs.reversed() {
+            pegs.append(PegPosition(x: 0.24, y: y))
         }
-        // …then right column bottom→top for the high strings.
-        for y in rightYs.reversed() {
+        // …then the HIGH strings descend the right column TOP→BOTTOM (so the
+        // highest string lands bottom-right).
+        for y in rightYs {
             pegs.append(PegPosition(x: 0.76, y: y))
         }
         return HeadstockLayout(pegs: pegs)
