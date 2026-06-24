@@ -26,6 +26,19 @@ struct TunerDevPanelView: View {
     var body: some View {
         NavigationStack {
             Form {
+                // ALGORITHM — which pitch detector runs (A/B them on a guitar).
+                Section("Detection — algorithm") {
+                    Picker("Algorithm", selection: $config.algorithm) {
+                        ForEach(PitchAlgorithm.allCases, id: \.self) { algo in
+                            Text(algo.label).tag(algo)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text("Ensemble cross-checks MPM + YIN (most robust); single algorithms are lighter.")
+                        .font(GKFont.caption)
+                        .foregroundStyle(GKColor.textSecondary)
+                }
+
                 // IN-TUNE THRESHOLD — how forgiving "in tune" is, in cents.
                 Section("In-tune threshold") {
                     Slider(value: $config.inTuneThresholdCents, in: 1...15, step: 1) {

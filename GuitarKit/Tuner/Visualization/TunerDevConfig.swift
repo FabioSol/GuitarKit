@@ -42,5 +42,9 @@ final class TunerDevConfig {
     /// The input level gate in dBFS. Lower admits quieter / decaying notes;
     /// higher ignores more background. Default matches the detector.
     var levelGateDB: Double = -52
+
+    /// Which detection algorithm runs (MPM / YIN / Ensemble). Default matches the
+    /// detector; the panel lets us A/B them on a real instrument.
+    var algorithm: PitchAlgorithm = .ensemble
 }
 #endif

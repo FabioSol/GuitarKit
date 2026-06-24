@@ -86,6 +86,10 @@ final class MPMPitchDetector: PitchDetecting {
     /// The de-jitter/smoothing stage. `var` because `push`/`reset` mutate it.
     @ObservationIgnored private var smoother = PitchSmoother()
 
+    /// Which detection algorithm to run (MPM / YIN / Ensemble). `var` so it can
+    /// be swapped live in the Tuner Lab. Defaults to the ensemble for robustness.
+    @ObservationIgnored private var algorithm: PitchAlgorithm
+
     /// MPM's confidence gate: estimates below this clarity are discarded. `var`
     /// so it can be tuned live (the Tuner Lab). Default loosened to admit plucked
     /// guitar — a decaying, slightly inharmonic string scores lower clarity than
@@ -108,6 +112,7 @@ final class MPMPitchDetector: PitchDetecting {
     ///     decaying tail of a plucked note instead of dropping it after the attack.
     init(
         calculator: PitchCalculator? = nil,
+        algorithm: PitchAlgorithm = .ensemble,
         clarityThreshold: Float = 0.6,
         levelGateDB: Float = -52
     ) {
@@ -116,6 +121,7 @@ final class MPMPitchDetector: PitchDetecting {
         // default-argument expressions run in a non-isolated context where the
         // (isolated) `PitchCalculator` initializer can't be called.
         self.calculator = calculator ?? PitchCalculator()
+        self.algorithm = algorithm
         self.clarityThreshold = clarityThreshold
         // dBFS → linear RMS: amplitude = 10^(dB / 20).
         self.levelGateRMS = pow(10, levelGateDB / 20)
@@ -135,12 +141,15 @@ final class MPMPitchDetector: PitchDetecting {
             return
         }
 
-        // 2) DETECT. The MPM clarity gate rejects noisy-but-loud signals.
-        guard let estimate = MPM.detectPitch(
-            samples: samples,
-            sampleRate: sampleRate,
-            clarityThreshold: clarityThreshold
-        ) else {
+        // 2) DETECT with the chosen algorithm (MPM / YIN / Ensemble). It returns
+        // a RAW estimate; we apply the clarity gate here so the same gate works
+        // for every algorithm.
+        guard let estimate = algorithm.detect(samples: samples, sampleRate: sampleRate) else {
+            reading = nil
+            return
+        }
+        // CLARITY GATE: reject noisy-but-loud signals (low periodicity).
+        guard estimate.clarity >= clarityThreshold else {
             reading = nil
             return
         }
@@ -185,6 +194,11 @@ final class MPMPitchDetector: PitchDetecting {
     /// decaying notes.
     func setLevelGate(dB: Float) {
         levelGateRMS = pow(10, dB / 20)
+    }
+
+    /// Swap the detection algorithm live (Tuner Lab): MPM / YIN / Ensemble.
+    func setAlgorithm(_ algorithm: PitchAlgorithm) {
+        self.algorithm = algorithm
     }
 
     // MARK: Live wiring

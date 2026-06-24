@@ -288,6 +288,7 @@ struct TunerView: View {
         .onChange(of: devConfig.smoothing) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.clarityThreshold) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.levelGateDB) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.algorithm) { _, _ in applyDevOverrides() }
         #endif
     }
 
@@ -506,6 +507,7 @@ struct TunerView: View {
         detector.setSmoothing(emaFactor: Float(devConfig.smoothing))
         detector.setClarityThreshold(Float(devConfig.clarityThreshold))
         detector.setLevelGate(dB: Float(devConfig.levelGateDB))
+        detector.setAlgorithm(devConfig.algorithm)
     }
     #endif
 }
