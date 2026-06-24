@@ -39,6 +39,30 @@ struct TunerDevPanelView: View {
                         .foregroundStyle(GKColor.textSecondary)
                 }
 
+                // PREPROCESSING — the band-pass that rescues the low strings.
+                Section("Detection — preprocessing") {
+                    Toggle("Band-pass filter", isOn: $config.preprocessEnabled)
+                    Slider(value: $config.preprocessLowPassHz, in: 400...3000, step: 50) {
+                        Text("Low-pass")
+                    } minimumValueLabel: {
+                        Text("400")
+                    } maximumValueLabel: {
+                        Text("3k")
+                    }
+                    .disabled(!config.preprocessEnabled)
+                    Slider(value: $config.preprocessHighPassHz, in: 40...120, step: 5) {
+                        Text("High-pass")
+                    } minimumValueLabel: {
+                        Text("40")
+                    } maximumValueLabel: {
+                        Text("120")
+                    }
+                    .disabled(!config.preprocessEnabled)
+                    Text("Pass \(Int(config.preprocessHighPassHz))–\(Int(config.preprocessLowPassHz)) Hz. Lower the low-pass to tame harmonics on stubborn low strings.")
+                        .font(GKFont.caption)
+                        .foregroundStyle(GKColor.textSecondary)
+                }
+
                 // IN-TUNE THRESHOLD — how forgiving "in tune" is, in cents.
                 Section("In-tune threshold") {
                     Slider(value: $config.inTuneThresholdCents, in: 1...15, step: 1) {

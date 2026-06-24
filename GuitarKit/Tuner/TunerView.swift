@@ -289,6 +289,9 @@ struct TunerView: View {
         .onChange(of: devConfig.clarityThreshold) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.levelGateDB) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.algorithm) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.preprocessEnabled) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.preprocessLowPassHz) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.preprocessHighPassHz) { _, _ in applyDevOverrides() }
         #endif
     }
 
@@ -508,6 +511,9 @@ struct TunerView: View {
         detector.setClarityThreshold(Float(devConfig.clarityThreshold))
         detector.setLevelGate(dB: Float(devConfig.levelGateDB))
         detector.setAlgorithm(devConfig.algorithm)
+        detector.setPreprocessing(enabled: devConfig.preprocessEnabled)
+        detector.setPreprocessorCutoffs(highPassHz: devConfig.preprocessHighPassHz,
+                                        lowPassHz: devConfig.preprocessLowPassHz)
     }
     #endif
 }

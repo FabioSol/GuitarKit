@@ -46,5 +46,12 @@ final class TunerDevConfig {
     /// Which detection algorithm runs (MPM / YIN / Ensemble). Default matches the
     /// detector; the panel lets us A/B them on a real instrument.
     var algorithm: PitchAlgorithm = .ensemble
+
+    /// Band-pass preprocessing (the low-string fix). Defaults match the detector.
+    var preprocessEnabled = true
+    /// Low-pass corner (Hz) — lower tames more harmonics on stubborn low strings.
+    var preprocessLowPassHz: Double = 1000
+    /// High-pass corner (Hz) — raise to fight mains hum / rumble.
+    var preprocessHighPassHz: Double = 65
 }
 #endif

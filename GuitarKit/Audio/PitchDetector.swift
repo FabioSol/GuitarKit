@@ -86,6 +86,11 @@ final class MPMPitchDetector: PitchDetecting {
     /// The de-jitter/smoothing stage. `var` because `push`/`reset` mutate it.
     @ObservationIgnored private var smoother = PitchSmoother()
 
+    /// Band-pass preprocessing (hum/rumble out, dominant harmonics tamed) so the
+    /// LOW strings — whose fundamental is weak vs. their harmonics — detect
+    /// reliably. `var` because it filters statefully and can be tuned live.
+    @ObservationIgnored private var preprocessor = PitchPreprocessor()
+
     /// Which detection algorithm to run (MPM / YIN / Ensemble). `var` so it can
     /// be swapped live in the Tuner Lab. Defaults to the ensemble for robustness.
     @ObservationIgnored private var algorithm: PitchAlgorithm
@@ -138,13 +143,20 @@ final class MPMPitchDetector: PitchDetecting {
         guard rms >= levelGateRMS else {
             reading = nil
             smoother.reset()
+            preprocessor.reset()        // start the filter clean on the next note
             return
         }
 
-        // 2) DETECT with the chosen algorithm (MPM / YIN / Ensemble). It returns
+        // 2) PREPROCESS: band-pass the buffer (hum/rumble out, harmonics tamed) so
+        // the fundamental dominates — the fix for the low strings. The level gate
+        // above uses the ORIGINAL signal (true loudness); detection uses the
+        // filtered copy.
+        let detectionSamples = preprocessor.process(samples, sampleRate: sampleRate)
+
+        // 3) DETECT with the chosen algorithm (MPM / YIN / Ensemble). It returns
         // a RAW estimate; we apply the clarity gate here so the same gate works
         // for every algorithm.
-        guard let estimate = algorithm.detect(samples: samples, sampleRate: sampleRate) else {
+        guard let estimate = algorithm.detect(samples: detectionSamples, sampleRate: sampleRate) else {
             reading = nil
             return
         }
@@ -154,10 +166,10 @@ final class MPMPitchDetector: PitchDetecting {
             return
         }
 
-        // 3) SMOOTH the raw frequency (kills octave-jump outliers + wobble).
+        // 4) SMOOTH the raw frequency (kills octave-jump outliers + wobble).
         let smoothed = smoother.push(estimate.frequency)
 
-        // 4) RESOLVE to a note + cents and publish.
+        // 5) RESOLVE to a note + cents and publish.
         guard let resolved = calculator.nearestNote(toFrequency: Double(smoothed)) else {
             reading = nil
             return
@@ -172,6 +184,7 @@ final class MPMPitchDetector: PitchDetecting {
 
     func reset() {
         smoother.reset()
+        preprocessor.reset()
         reading = nil
     }
 
@@ -199,6 +212,17 @@ final class MPMPitchDetector: PitchDetecting {
     /// Swap the detection algorithm live (Tuner Lab): MPM / YIN / Ensemble.
     func setAlgorithm(_ algorithm: PitchAlgorithm) {
         self.algorithm = algorithm
+    }
+
+    /// Turn band-pass preprocessing on/off live (Tuner Lab).
+    func setPreprocessing(enabled: Bool) {
+        preprocessor.isEnabled = enabled
+    }
+
+    /// Live-tune the band-pass corners (Tuner Lab). Lower the low-pass to tame
+    /// more harmonics on stubborn low strings; raise the high-pass to fight hum.
+    func setPreprocessorCutoffs(highPassHz: Double, lowPassHz: Double) {
+        preprocessor.setCutoffs(highPassHz: highPassHz, lowPassHz: lowPassHz)
     }
 
     // MARK: Live wiring
