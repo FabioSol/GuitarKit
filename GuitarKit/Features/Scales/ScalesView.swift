@@ -25,19 +25,26 @@ struct ScalesView: View {
         ZStack {
             GKColor.background.ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                Text("Scales")
-                    .font(GKFont.largeTitle)
-                    .foregroundStyle(GKColor.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // A ScrollView so the fretboard + controls fit on small iPhones and
+            // the tool behaves like the Chords / Metronome / Circle screens. The
+            // content scrolls under the floating nav.
+            ScrollView {
+                VStack(spacing: 18) {
+                    Text("Scales")
+                        .font(GKFont.largeTitle)
+                        .foregroundStyle(GKColor.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                selectors
-                fretboard
-                playControls
-                toggles
-                Spacer()
+                    selectors
+                    fretboard
+                    playControls
+                    toggles
+                }
+                .padding()
+                // Reserve room at the bottom so the toggles clear the floating
+                // rotary nav.
+                .padding(.bottom, 96)
             }
-            .padding()
         }
     }
 
@@ -76,9 +83,43 @@ struct ScalesView: View {
                         }
                     }
                 }
+
+                // Fret-number axis under the grid: "0" (the open/nut position) is
+                // emphasized, then 1, 2, 3… up the neck — so it's always obvious
+                // which way the neck runs and where the head is.
+                HStack(spacing: 6) {
+                    ForEach(frets, id: \.self) { fret in
+                        Text("\(fret)")
+                            .font(.system(size: 11,
+                                          weight: fret == 0 ? .bold : .regular,
+                                          design: .rounded))
+                            .foregroundStyle(fret == 0 ? GKColor.accent : GKColor.textSecondary)
+                            .frame(width: 38)
+                    }
+                }
             }
             .padding(.vertical, 8)
+            // Leave a gap on the head side for the nut bar so it sits BESIDE the
+            // open column rather than on top of it.
+            .padding(model.isLeftHanded ? .trailing : .leading, 12)
+            // The NUT / head marker: a thick bar at the head end of the neck
+            // (the side fret 0 sits on), so the diagram is never ambiguous about
+            // which end is the head. It moves to the right for a left-handed
+            // mirror (where the fret columns are reversed).
+            .overlay(alignment: model.isLeftHanded ? .trailing : .leading) {
+                nutMarker
+            }
         }
+    }
+
+    /// A thick rounded bar marking the NUT — the head end of the neck. Sits in the
+    /// gap just outside the open-string (fret 0) column.
+    private var nutMarker: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(GKColor.textPrimary.opacity(0.65))
+            .frame(width: 5)
+            .padding(.vertical, 6)
+            .accessibilityHidden(true)
     }
 
     private func cell(string: Int, fret: Int) -> some View {

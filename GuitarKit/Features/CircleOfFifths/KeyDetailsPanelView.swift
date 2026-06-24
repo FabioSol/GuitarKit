@@ -31,15 +31,20 @@ struct KeyDetailsPanelView: View {
         // A vertical stack of titled sections, left-aligned.
         VStack(alignment: .leading, spacing: 16) {
 
-            // The selected key's name, as the panel's heading ("C major").
-            Text(viewModel.selectedKey.name)
-                .font(GKFont.title)
-                .foregroundStyle(GKColor.textPrimary)
+            // The selected key's name as the heading, with a DISCRETE "View
+            // scale" chip tucked on the trailing side (rather than a big full-width
+            // button) so the panel stays compact.
+            HStack(alignment: .firstTextBaseline) {
+                Text(viewModel.selectedKey.name)
+                    .font(GKFont.title)
+                    .foregroundStyle(GKColor.textPrimary)
+                Spacer()
+                viewScaleButton
+            }
 
             signatureRow
             relativeRow
             diatonicChordsSection
-            viewScaleButton
         }
         .padding(20)
         // Wrap the whole panel in our Liquid Glass chrome surface. The panel is
@@ -167,21 +172,20 @@ struct KeyDetailsPanelView: View {
 
     // MARK: - View scale cross-link
 
-    /// "View scale" — opens the selected key's scale in the Scales tool. The key's
-    /// scale is the same one the wheel's selection conceptually represents (major
-    /// key → major scale, minor key → natural minor), via the view model's
+    /// "View scale" — a discrete chip that opens the selected key's scale in the
+    /// Scales tool. The key's scale is the one the wheel's selection represents
+    /// (major key → major scale, minor key → natural minor), via the view model's
     /// `scale(for:)`, so the two tools always agree.
     private var viewScaleButton: some View {
         Button {
             onOpenScale(viewModel.scale(for: viewModel.selectedKey))
         } label: {
             Label("View scale", systemImage: "music.note.list")
-                .font(GKFont.body)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .font(GKFont.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(GKColor.accent.opacity(0.18))
+                    Capsule().fill(GKColor.accent.opacity(0.18))
                 )
                 .foregroundStyle(GKColor.accent)
         }

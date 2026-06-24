@@ -42,7 +42,7 @@ struct CircleOfFifthsView: View {
             // A scrollable column so the wheel + panel fit on small devices and
             // with large Dynamic Type sizes without clipping.
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: 14) {
                     // Screen title.
                     Text(GKTool.circleOfFifths.title)
                         .font(GKFont.largeTitle)
@@ -53,7 +53,7 @@ struct CircleOfFifthsView: View {
                     // seats and their labels have room.
                     CircleWheelView(viewModel: viewModel)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 320)
+                        .frame(height: 290)
 
                     // THE DETAILS PANEL — now the hub's action surface: its chord
                     // chips and "View scale" button drive the cross-links.
@@ -68,7 +68,7 @@ struct CircleOfFifthsView: View {
                 .padding(.top, 24)
                 // Leave room at the bottom so the floating rotary nav doesn't
                 // cover the last chord chips.
-                .padding(.bottom, 120)
+                .padding(.bottom, 100)
             }
         }
         .ignoresSafeArea(edges: .bottom)

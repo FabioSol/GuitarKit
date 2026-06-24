@@ -29,21 +29,29 @@ struct ChordsView: View {
         ZStack {
             GKColor.background.ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                Text("Chords")
-                    .font(GKFont.largeTitle)
-                    .foregroundStyle(GKColor.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // A ScrollView so the tall chord box + all the controls fit on small
+            // iPhones (and matches the Metronome / Circle tools). The content
+            // scrolls under the floating nav; the bottom padding keeps the last
+            // control clear of it.
+            ScrollView {
+                VStack(spacing: 18) {
+                    Text("Chords")
+                        .font(GKFont.largeTitle)
+                        .foregroundStyle(GKColor.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                selectors
-                chordName
-                chordBox
-                voicingControls
-                playControls
-                toggles
-                Spacer()
+                    selectors
+                    chordName
+                    chordBox
+                    voicingControls
+                    playControls
+                    toggles
+                }
+                .padding()
+                // Reserve room at the bottom so the toggles clear the floating
+                // rotary nav.
+                .padding(.bottom, 96)
             }
-            .padding()
         }
     }
 
@@ -87,9 +95,17 @@ struct ChordsView: View {
 
     // MARK: - The vertical chord box
 
-    /// The chord diagram. Strings run TOP→BOTTOM as vertical lines and frets run
-    /// LEFT→RIGHT as horizontal lines — the standard vertical chord-box the spec
-    /// asks us to default to. Handedness mirrors the string columns.
+    /// Width of one string column. Fixed (not stretched to fill the screen) so the
+    /// whole box stays PORTRAIT — taller than wide, like a real chord chart — and
+    /// the vertical string lines read as the long dimension of the neck.
+    private let cellWidth: CGFloat = 34
+    /// Height of one fret row. Taller than `cellWidth` so each cell is portrait.
+    private let cellHeight: CGFloat = 42
+
+    /// The chord diagram. Strings run TOP→BOTTOM as thin vertical lines and frets
+    /// run LEFT→RIGHT as horizontal lines, with a thick NUT at the top — the
+    /// standard vertical chord box. Sized portrait and CENTERED. Handedness
+    /// mirrors the string columns.
     private var chordBox: some View {
         // String columns left→right. By convention the LOW string is on the left
         // (like looking at the neck head-on, low E nearest you on the left); the
@@ -103,9 +119,9 @@ struct ChordsView: View {
             HStack(spacing: 0) {
                 ForEach(strings, id: \.self) { string in
                     Text(openMutedMarker(forString: string))
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(GKColor.textSecondary)
-                        .frame(maxWidth: .infinity)
+                        .frame(width: cellWidth)
                 }
             }
 
@@ -131,8 +147,8 @@ struct ChordsView: View {
                 nutBar, alignment: .top
             )
         }
-        .frame(height: 240)
-        .padding(.horizontal, 24)
+        // A fixed-size, centered portrait box (not stretched across the screen).
+        .frame(maxWidth: .infinity)
         // The chord box is a visual grid of dots; collapse it into ONE VoiceOver
         // element that speaks the whole voicing (slice #23), since cell-by-cell
         // navigation of a diagram reads poorly. Updates as the voicing changes.
@@ -149,19 +165,23 @@ struct ChordsView: View {
             && fret > 0   // fret 0 is "open", shown by the O marker, not a dot
 
         return ZStack {
-            // The vertical string line runs down the middle of every cell.
+            // The vertical string line runs down the middle of every cell. Kept
+            // THIN (and lighter than the fret wires) so it never gets mistaken for
+            // a fret — the user's confusion was thick strings reading as frets.
             Rectangle()
-                .fill(GKColor.textSecondary.opacity(0.5))
-                .frame(width: 1.5)
+                .fill(GKColor.textSecondary.opacity(0.35))
+                .frame(width: 1)
 
-            // The horizontal fret line sits at the TOP of each cell (so the line
-            // between fret 0 and fret 1 reads as the first fret wire, etc.). We
-            // skip it on the very first row so the nut overlay owns that edge.
+            // The horizontal fret WIRE sits at the TOP of each cell (so the line
+            // between fret 0 and fret 1 reads as the first fret wire, etc.). A
+            // touch heavier than the strings so the grid reads as "frets across,
+            // strings down." We skip it on the first row so the nut overlay owns
+            // that edge.
             VStack {
                 if fret > 0 {
                     Rectangle()
-                        .fill(GKColor.textSecondary.opacity(0.35))
-                        .frame(height: 1)
+                        .fill(GKColor.textSecondary.opacity(0.5))
+                        .frame(height: 1.5)
                 }
                 Spacer()
             }
@@ -179,8 +199,7 @@ struct ChordsView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 36)
+        .frame(width: cellWidth, height: cellHeight)
     }
 
     /// The nut bar: a thick line at the top edge, shown only for open-position
