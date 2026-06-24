@@ -174,7 +174,13 @@ enum ToneOscillator {
 
         /// Start at a given pitch. `phase` begins at 0 so the very first sample
         /// is `sin(0) = 0` — a clean start from silence (no click).
-        init(frequencyHz: Double, sampleRate: Double) {
+        ///
+        /// `nonisolated` because this is pure value math with no main-actor state:
+        /// `ToneGenerator` initializes it in a `nonisolated(unsafe)` stored
+        /// property (the real-time render state), and under this project's
+        /// main-actor-by-default isolation a plain `init` there would warn
+        /// ("call to main actor-isolated initializer in a nonisolated context").
+        nonisolated init(frequencyHz: Double, sampleRate: Double) {
             self.phaseStep = ToneOscillator.phaseStep(
                 frequencyHz: frequencyHz, sampleRate: sampleRate
             )

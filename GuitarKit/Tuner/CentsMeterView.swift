@@ -127,6 +127,11 @@ struct CentsMeterView: View {
     }
 }
 
+// `CentsMeterView`'s synthesized `init(cents:zone:)` already matches the
+// `TunerVisualization` contract, so it joins the swappable set with an empty
+// conformance. (See `TunerVisualization` for the why.)
+extension CentsMeterView: TunerVisualization {}
+
 #Preview {
     VStack(spacing: 40) {
         CentsMeterView(cents: -22, zone: .flat)

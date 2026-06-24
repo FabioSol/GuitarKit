@@ -161,6 +161,15 @@ final class MPMPitchDetector: PitchDetecting {
         reading = nil
     }
 
+    /// Replace the smoother with one tuned to a new EMA factor (0…1). Used by the
+    /// debug "Tuner Lab" panel (slice #07) to A/B smoothing live; the new factor
+    /// takes effect on the next reading. We rebuild rather than mutate because the
+    /// factor is set once at `PitchSmoother` init; history is dropped (a clean
+    /// restart), which is exactly what we want when changing how smoothing behaves.
+    func setSmoothing(emaFactor: Float) {
+        smoother = PitchSmoother(emaFactor: emaFactor)
+    }
+
     // MARK: Live wiring
 
     /// Subscribe this detector to a live audio source. Each hardware buffer is

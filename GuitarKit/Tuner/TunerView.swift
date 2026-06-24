@@ -57,6 +57,14 @@ struct TunerView: View {
     @State private var selection = InstrumentSelectionStore()
     @State private var customTunings = CustomTuningStore()
 
+    #if DEBUG
+    /// The developer A/B knobs (visualization, in-tune threshold, smoothing) and
+    /// whether the "Tuner Lab" panel is showing. Slice #07 — the whole block is
+    /// `#if DEBUG`, so it and its UI are compiled out of release builds.
+    @State private var devConfig = TunerDevConfig()
+    @State private var showingDevPanel = false
+    #endif
+
     /// Which sheet (if any) is up. A single enum (rather than two Bools) lets the
     /// picker swap straight to the custom editor without two sheets fighting.
     @State private var activeSheet: TunerSheet?
@@ -121,6 +129,12 @@ struct TunerView: View {
         .task {
             restoreSelection()
             applySettings()
+            #if DEBUG
+            // Seed the detector + session from the dev knobs' starting values
+            // (defaults match the shipping behavior, so this is a no-op unless
+            // the panel has already been touched).
+            applyDevOverrides()
+            #endif
             if !shouldShowPriming {
                 syncEngine(to: permission.state)
             }
@@ -174,7 +188,8 @@ struct TunerView: View {
                         model: session,
                         isToneMode: isToneMode,
                         playingStringIndex: playingStringIndex,
-                        onTapPeg: handlePegTap
+                        onTapPeg: handlePegTap,
+                        visualization: heroVisualization
                     )
                 } back: {
                     ChromaticReadoutView(reading: detector.reading)
@@ -192,6 +207,11 @@ struct TunerView: View {
                         toneModeToggle
                     }
                     chromaticModeToggle
+                    #if DEBUG
+                    // Developer-only: open the "Tuner Lab" A/B panel. Compiled
+                    // out of release builds.
+                    devPanelButton
+                    #endif
                 }
 
                 // The level meter, a secondary "is sound getting in?" signal.
@@ -254,6 +274,19 @@ struct TunerView: View {
             }
         }
         .ignoresSafeArea()
+        #if DEBUG
+        // The developer "Tuner Lab" sheet (slice #07). A second `.sheet` modifier
+        // is fine: only one sheet is ever presented at a time. Compiled out of
+        // release builds along with everything it touches.
+        .sheet(isPresented: $showingDevPanel) {
+            TunerDevPanelView(config: devConfig) { showingDevPanel = false }
+        }
+        // Live-apply the dev knobs the instant they change so we can feel the
+        // difference while playing. (`visualization` is read straight into the
+        // hero, so it needs no handler here.)
+        .onChange(of: devConfig.inTuneThresholdCents) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.smoothing) { _, _ in applyDevOverrides() }
+        #endif
     }
 
     /// The tone-mode toggle button (a speaker icon that fills when active).
@@ -437,6 +470,51 @@ struct TunerView: View {
             endPoint: .bottomTrailing
         )
     }
+
+    /// Which visualization the hero renders. In debug builds this follows the
+    /// dev panel; in release it's always the default linear meter (the dev knobs
+    /// don't exist there).
+    private var heroVisualization: TunerVisualizationKind {
+        #if DEBUG
+        devConfig.visualization
+        #else
+        .linear
+        #endif
+    }
+
+    #if DEBUG
+    /// The developer "Tuner Lab" button (a flask) that opens the A/B panel.
+    private var devPanelButton: some View {
+        Button {
+            showingDevPanel = true
+        } label: {
+            Image(systemName: "flask")
+                .font(.footnote)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background { Capsule().fill(GKColor.textSecondary.opacity(0.12)) }
+                .foregroundStyle(GKColor.textSecondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Tuner Lab (developer)")
+    }
+
+    /// Push the dev knobs into the live pipeline: the in-tune threshold into the
+    /// session's tolerance, and the smoothing factor into the detector. Uses the
+    /// current reference pitch so we don't disturb the user's A4 calibration.
+    private func applyDevOverrides() {
+        let hz = settings?.referencePitchHz ?? ReferencePitch.standard.hertz
+        session.reconfigure(
+            referencePitch: ReferencePitch(hertz: hz),
+            tolerance: TuningTolerance(
+                inTuneCents: devConfig.inTuneThresholdCents,
+                perfectCents: 1,
+                holdDuration: 0.7
+            )
+        )
+        detector.setSmoothing(emaFactor: Float(devConfig.smoothing))
+    }
+    #endif
 }
 
 #Preview {

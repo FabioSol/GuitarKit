@@ -1,0 +1,41 @@
+//
+//  TunerDevConfig.swift
+//  GuitarKit
+//
+//  DEVELOPER-ONLY tuning knobs for A/B-ing the tuner's feel. This whole file is
+//  wrapped in `#if DEBUG`, so it (and everything that reads it) is COMPILED OUT
+//  of release builds — shipping users never get these controls, per slice #07's
+//  acceptance criteria ("dev-only controls are compiled out of release builds").
+//
+//  It holds three live-tweakable things:
+//    • which visualization the hero wears (linear vs radial)
+//    • the in-tune threshold, in cents (how forgiving "in tune" is)
+//    • the smoothing factor fed to the pitch detector (jittery ↔ sluggish)
+//
+//  These exist so we can find the right defaults by FEEL on a device, then bake
+//  the winners into the real Settings / domain defaults.
+//
+
+#if DEBUG
+import Observation
+
+/// Live A/B knobs for the tuner. `@Observable` so the hero re-renders when the
+/// visualization changes, and `@MainActor` because it's read/written from the UI.
+@MainActor
+@Observable
+final class TunerDevConfig {
+
+    /// Which look the hero renders. Flipping this swaps the visualization live.
+    var visualization: TunerVisualizationKind = .linear
+
+    /// The "in tune" half-window, in cents. Lower = stricter (harder to satisfy),
+    /// higher = more forgiving. Mirrors `TuningTolerance.inTuneCents`; the tuner
+    /// reapplies it to the session whenever it changes. Default matches the
+    /// app's "standard" sensitivity (±5¢).
+    var inTuneThresholdCents: Double = 5
+
+    /// The pitch detector's EMA smoothing factor (0…1). Near 0 = very smooth but
+    /// laggy; near 1 = snappy but jittery. Default matches `PitchSmoother`'s 0.25.
+    var smoothing: Double = 0.25
+}
+#endif
