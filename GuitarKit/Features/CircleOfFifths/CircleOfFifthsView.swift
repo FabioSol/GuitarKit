@@ -20,15 +20,18 @@ import SwiftUI
 
 struct CircleOfFifthsView: View {
 
-    /// The feature's single source of truth. `@State` on a reference type holds
-    /// ONE instance alive across `body` rebuilds — exactly what we need so the
-    /// selection persists. We initialise it with a fresh view model (defaulting
-    /// to C major).
-    ///
-    /// (`@State` is normally for value types, but the modern pattern for an
-    /// `@Observable` class a view *owns* is precisely `@State var model = …`. The
-    /// view owns the object's lifetime; `@Observable` handles change tracking.)
-    @State private var viewModel = CircleOfFifthsViewModel()
+    /// The feature's single source of truth. INJECTED by `RootView` (which owns
+    /// it via `@State`) so the explorer's selection survives navigating away and
+    /// back — including when a cross-link jumps to Chords/Scales and the user
+    /// returns (slice #21, PRD story 49).
+    let viewModel: CircleOfFifthsViewModel
+
+    /// CROSS-LINKS (slice #21) that promote the circle from explorer to hub. The
+    /// shell (`RootView`) supplies these: tapping a diatonic chip opens that chord
+    /// in the Chords tool; "View scale" opens the key's scale in the Scales tool.
+    /// They default to no-ops so the view still previews standalone.
+    var onOpenChord: (Chord) -> Void = { _ in }
+    var onOpenScale: (Scale) -> Void = { _ in }
 
     var body: some View {
         ZStack {
@@ -52,9 +55,14 @@ struct CircleOfFifthsView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 320)
 
-                    // THE DETAILS PANEL.
-                    KeyDetailsPanelView(viewModel: viewModel)
-                        .frame(maxWidth: .infinity)
+                    // THE DETAILS PANEL — now the hub's action surface: its chord
+                    // chips and "View scale" button drive the cross-links.
+                    KeyDetailsPanelView(
+                        viewModel: viewModel,
+                        onOpenChord: onOpenChord,
+                        onOpenScale: onOpenScale
+                    )
+                    .frame(maxWidth: .infinity)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
@@ -79,5 +87,5 @@ struct CircleOfFifthsView: View {
 }
 
 #Preview {
-    CircleOfFifthsView()
+    CircleOfFifthsView(viewModel: CircleOfFifthsViewModel())
 }

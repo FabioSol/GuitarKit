@@ -13,7 +13,13 @@ import SwiftUI
 
 struct ScalesView: View {
 
-    @State private var model = ScalesViewModel()
+    /// The Scales state. INJECTED by `RootView` (which owns it via `@State`)
+    /// rather than owned here, so the tool's selection survives navigating away
+    /// and back — and so the Circle-of-Fifths "View scale" cross-link can load a
+    /// scale into it before we appear (slice #21). `@Bindable` gives us the
+    /// two-way `$model.…` bindings the pickers/toggles need from an object we
+    /// don't own.
+    @Bindable var model: ScalesViewModel
 
     var body: some View {
         ZStack {
@@ -178,5 +184,5 @@ struct ScalesView: View {
 }
 
 #Preview {
-    ScalesView()
+    ScalesView(model: ScalesViewModel())
 }

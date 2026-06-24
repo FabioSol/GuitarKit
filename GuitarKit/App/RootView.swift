@@ -27,6 +27,16 @@ struct RootView: View {
     /// Whether the Settings sheet is showing.
     @State private var showingSettings = false
 
+    // The view models for the harmony tools, OWNED here at the shell so they
+    // outlive the per-tool screens (which `.id(selection)` recreates on each
+    // switch). Hoisting them up here is what lets two things work at once
+    // (slice #21): each tool's state is PRESERVED when you navigate away and
+    // back, and the Circle's cross-links can LOAD context into Chords/Scales
+    // before those screens appear.
+    @State private var circleModel = CircleOfFifthsViewModel()
+    @State private var chordsModel = ChordsViewModel()
+    @State private var scalesModel = ScalesViewModel()
+
     var body: some View {
         // `ZStack(alignment: .bottom)` layers the tool screen behind the nav,
         // pinning the nav to the bottom edge.
@@ -102,19 +112,43 @@ struct RootView: View {
             // `@State` view model so the tempo survives navigating away and back.
             MetronomeView()
         case .circleOfFifths:
-            // The real Circle-of-Fifths explorer (slice #18) replaces the
-            // placeholder. It owns its own `@State` view model, so its selection
-            // is preserved while the app runs even as we navigate away and back.
-            CircleOfFifthsView()
+            // The Circle-of-Fifths explorer (slice #18), now a HUB (slice #21):
+            // its details panel cross-links into Chords and Scales. The model is
+            // owned by the shell so the selection survives navigation.
+            CircleOfFifthsView(
+                viewModel: circleModel,
+                onOpenChord: openChordInChordsTool,
+                onOpenScale: openScaleInScalesTool
+            )
         case .chords:
             // The Chords tool (slice #20): pick a root + quality and see a
             // playable voicing for the active tuning, built on the same pure
             // `Fretboard` engine the Scales tool uses.
-            ChordsView()
+            ChordsView(model: chordsModel)
         case .scales:
             // The Scales tool (slice #19): tuning-aware fretboard + scale shapes.
-            ScalesView()
+            ScalesView(model: scalesModel)
         }
+    }
+
+    // MARK: - Cross-links (slice #21)
+
+    /// Load a chord into the Chords tool and switch the rotary nav to it. Because
+    /// the Chords model is OWNED here, setting it before changing `selection`
+    /// means the Chords screen appears already showing this chord — and returning
+    /// to the Circle afterwards finds it unchanged (its model is owned here too).
+    private func openChordInChordsTool(_ chord: Chord) {
+        chordsModel.root = chord.root
+        chordsModel.quality = chord.quality
+        chordsModel.resetVoicing()      // land on the default shape, not mid-cycle
+        withAnimation(.easeInOut(duration: 0.25)) { selection = .chords }
+    }
+
+    /// Load a scale into the Scales tool and switch the rotary nav to it.
+    private func openScaleInScalesTool(_ scale: Scale) {
+        scalesModel.root = scale.root
+        scalesModel.scaleType = scale.type
+        withAnimation(.easeInOut(duration: 0.25)) { selection = .scales }
     }
 }
 

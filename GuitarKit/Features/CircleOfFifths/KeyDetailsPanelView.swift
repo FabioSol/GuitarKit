@@ -21,6 +21,12 @@ struct KeyDetailsPanelView: View {
     /// The shared view model, read for the selected key and its derived details.
     let viewModel: CircleOfFifthsViewModel
 
+    /// CROSS-LINKS (slice #21): open a diatonic chord in the Chords tool, or the
+    /// selected key's scale in the Scales tool. Supplied by the shell; default
+    /// no-ops keep the panel previewable in isolation.
+    var onOpenChord: (Chord) -> Void = { _ in }
+    var onOpenScale: (Scale) -> Void = { _ in }
+
     var body: some View {
         // A vertical stack of titled sections, left-aligned.
         VStack(alignment: .leading, spacing: 16) {
@@ -33,6 +39,7 @@ struct KeyDetailsPanelView: View {
             signatureRow
             relativeRow
             diatonicChordsSection
+            viewScaleButton
         }
         .padding(20)
         // Wrap the whole panel in our Liquid Glass chrome surface. The panel is
@@ -128,9 +135,12 @@ struct KeyDetailsPanelView: View {
         let symbol = diatonic.chord.root.name + diatonic.chord.quality.symbol
 
         return Button {
-            // No-op audio hook for now (slice #13 wires the synth). Until then
-            // this does nothing, which is the intended behaviour for this slice.
-            viewModel.onPlayChord?(diatonic.chord)
+            // CROSS-LINK (slice #21): open this chord in the Chords tool, loaded
+            // and ready to play. The shell switches the rotary nav to Chords and
+            // sets its root + quality. (The optional `onPlayChord` audio hook
+            // remains available for a future preview-on-tap; the chip's primary
+            // gesture is now navigation.)
+            onOpenChord(diatonic.chord)
         } label: {
             VStack(spacing: 2) {
                 Text(diatonic.romanNumeral)
@@ -150,8 +160,33 @@ struct KeyDetailsPanelView: View {
         }
         .buttonStyle(.plain)
         // Spell out the chip for VoiceOver: "Five chord, G major" reads better
-        // than "V, G". We keep it concise.
+        // than "V, G". We keep it concise, and add a hint for the cross-link.
         .accessibilityLabel("\(diatonic.romanNumeral) chord, \(symbol)")
+        .accessibilityHint("Opens in the Chords tool")
+    }
+
+    // MARK: - View scale cross-link
+
+    /// "View scale" — opens the selected key's scale in the Scales tool. The key's
+    /// scale is the same one the wheel's selection conceptually represents (major
+    /// key → major scale, minor key → natural minor), via the view model's
+    /// `scale(for:)`, so the two tools always agree.
+    private var viewScaleButton: some View {
+        Button {
+            onOpenScale(viewModel.scale(for: viewModel.selectedKey))
+        } label: {
+            Label("View scale", systemImage: "music.note.list")
+                .font(GKFont.body)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(GKColor.accent.opacity(0.18))
+                )
+                .foregroundStyle(GKColor.accent)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens this key's scale in the Scales tool")
     }
 
     // MARK: - Small helper

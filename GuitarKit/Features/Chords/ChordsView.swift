@@ -19,7 +19,11 @@ import SwiftUI
 
 struct ChordsView: View {
 
-    @State private var model = ChordsViewModel()
+    /// The Chords state. INJECTED by `RootView` (which owns it via `@State`) so
+    /// the tool's selection survives navigation, and so the Circle-of-Fifths
+    /// diatonic-chord chips can load a chord into it before we appear (slice #21).
+    /// `@Bindable` gives the two-way `$model.…` bindings the pickers/toggles need.
+    @Bindable var model: ChordsViewModel
 
     var body: some View {
         ZStack {
@@ -307,5 +311,5 @@ struct ChordsView: View {
 }
 
 #Preview {
-    ChordsView()
+    ChordsView(model: ChordsViewModel())
 }
