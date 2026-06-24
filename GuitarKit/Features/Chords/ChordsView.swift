@@ -133,6 +133,11 @@ struct ChordsView: View {
         }
         .frame(height: 240)
         .padding(.horizontal, 24)
+        // The chord box is a visual grid of dots; collapse it into ONE VoiceOver
+        // element that speaks the whole voicing (slice #23), since cell-by-cell
+        // navigation of a diagram reads poorly. Updates as the voicing changes.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(model.voicingAccessibilityDescription)
     }
 
     /// One cell of the grid: draws the string line + fret line, and a filled dot

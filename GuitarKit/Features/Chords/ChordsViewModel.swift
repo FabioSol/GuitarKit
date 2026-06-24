@@ -154,6 +154,29 @@ final class ChordsViewModel {
     /// UI and to decide whether the cycle button does anything).
     var voicingCount: Int { alternateVoicings.count }
 
+    /// A spoken description of the current voicing for VoiceOver (slice #23). The
+    /// chord box is otherwise a purely VISUAL grid of dots, invisible to a screen
+    /// reader; this turns it into one element that reads the chord name plus a
+    /// per-string, low → high account ("low E muted, A string 3rd fret…"). Using
+    /// each string's open-note name makes it a guitarist-friendly read.
+    var voicingAccessibilityDescription: String {
+        let name = "\(root.name)\(quality.symbol)"
+        let board = fretboard
+        let frets = currentVoicing.frets
+        var parts: [String] = []
+        for string in 0..<board.stringCount {
+            let openName = board.openStrings[string].pitchClass.name
+            let fret = string < frets.count ? frets[string] : nil
+            switch fret {
+            case .none:        parts.append("\(openName) string muted")
+            case .some(0):     parts.append("\(openName) string open")
+            case .some(let f): parts.append("\(openName) string fret \(f)")
+            }
+        }
+        let counter = voicingCount > 1 ? " Voicing \(voicingIndex + 1) of \(voicingCount)." : ""
+        return "\(name) chord.\(counter) " + parts.joined(separator: ", ")
+    }
+
     /// Advance to the next voicing up the neck, wrapping back to the first after
     /// the last. Wrapping (rather than stopping) makes the cycle button feel
     /// endless, which is what "cycle through alternate voicings" implies.
