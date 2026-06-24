@@ -48,6 +48,10 @@ struct TunerView: View {
     /// (mic off, session → playback) and tapping a peg plays instead of locks.
     @State private var isToneMode = false
 
+    /// Whether the hero is flipped to chromatic mode (names the nearest note for
+    /// any pitch, no string targets). Mic stays on; the session isn't fed.
+    @State private var isChromaticMode = false
+
     /// The picker's persistent memory (last-used instrument/tuning + usage counts)
     /// and whether the picker sheet is showing.
     @State private var selection = InstrumentSelectionStore()
@@ -134,35 +138,48 @@ struct TunerView: View {
             VStack(spacing: 20) {
                 // Top-left: the instrument/tuning selector pill (opens the picker).
                 // Kept left so it never collides with the shell's top-right gear.
-                HStack {
-                    InstrumentSelectorPill(
-                        instrumentName: session.currentInstrument.name,
-                        tuningName: session.currentTuning.name,
-                        action: { showingPicker = true }
-                    )
-                    Spacer()
+                // Hidden in chromatic mode (which has no instrument/tuning).
+                if !isChromaticMode {
+                    HStack {
+                        InstrumentSelectorPill(
+                            instrumentName: session.currentInstrument.name,
+                            tuningName: session.currentTuning.name,
+                            action: { showingPicker = true }
+                        )
+                        Spacer()
+                    }
                 }
 
-                // The hero: headstock + cents meter (or tone hint) + flourish.
-                TunerHeroView(
-                    model: session,
-                    isToneMode: isToneMode,
-                    playingStringIndex: playingStringIndex,
-                    onTapPeg: handlePegTap
-                )
-
-                // The face controls: capo chip + tone-mode toggle.
-                HStack(spacing: 16) {
-                    CapoControlView(
-                        capo: session.capo,
-                        onIncrement: session.incrementCapo,
-                        onReset: session.resetCapo
+                // The hero, flipped between targeted tuning (front) and the
+                // chromatic readout (back). The flip degrades to a cross-fade
+                // under Reduce Motion (handled inside HeroFlip).
+                HeroFlip(isFlipped: isChromaticMode) {
+                    TunerHeroView(
+                        model: session,
+                        isToneMode: isToneMode,
+                        playingStringIndex: playingStringIndex,
+                        onTapPeg: handlePegTap
                     )
-                    toneModeToggle
+                } back: {
+                    ChromaticReadoutView(reading: detector.reading)
+                }
+
+                // The face controls. In chromatic mode only the chromatic toggle
+                // shows (no strings → no capo/tone); otherwise capo + tone + flip.
+                HStack(spacing: 16) {
+                    if !isChromaticMode {
+                        CapoControlView(
+                            capo: session.capo,
+                            onIncrement: session.incrementCapo,
+                            onReset: session.resetCapo
+                        )
+                        toneModeToggle
+                    }
+                    chromaticModeToggle
                 }
 
                 // The level meter, a secondary "is sound getting in?" signal.
-                // Hidden in tone-mode (the mic is off then).
+                // Hidden in tone-mode (mic off); shown in chromatic (mic on).
                 if !isToneMode {
                     InputLevelMeter(level: engine.level)
                         .padding(.horizontal, 40)
@@ -170,15 +187,21 @@ struct TunerView: View {
             }
             .padding()
         }
-        // Drive the session from the detector — but ONLY in tuning mode. In tone-
-        // mode the mic is off and we don't want the tuner reacting to its own tone.
+        // Drive the session from the detector — but ONLY in targeted tuning mode.
+        // In tone-mode the mic is off; in chromatic mode the readout reads the raw
+        // detector reading directly and the session (targets/haptics) is bypassed.
         .onChange(of: detector.reading) { _, reading in
-            guard !isToneMode else { return }
+            guard !isToneMode, !isChromaticMode else { return }
             session.ingest(reading)
         }
         // Entering/leaving tone-mode flips the audio path (see syncToneMode).
         .onChange(of: isToneMode) { _, on in
             syncToneMode(on)
+        }
+        // Chromatic mode needs live detection, so it can't coexist with tone-mode
+        // (which turns the mic off). Turning chromatic on forces tone-mode off.
+        .onChange(of: isChromaticMode) { _, on in
+            if on, isToneMode { isToneMode = false }
         }
         // The instrument/tuning picker.
         .sheet(isPresented: $showingPicker) {
@@ -215,6 +238,28 @@ struct TunerView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(isToneMode ? "Tone mode on" : "Tone mode off")
         .accessibilityHint("Tap a peg to hear its pitch")
+    }
+
+    /// The chromatic-mode toggle (a tuning fork that fills when active). Flips the
+    /// hero to name the nearest note for any pitch.
+    private var chromaticModeToggle: some View {
+        Button {
+            isChromaticMode.toggle()
+        } label: {
+            Image(systemName: "tuningfork")
+                .font(.footnote)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background {
+                    Capsule().fill(isChromaticMode
+                        ? GKColor.accent.opacity(0.18)
+                        : GKColor.textSecondary.opacity(0.12))
+                }
+                .foregroundStyle(isChromaticMode ? GKColor.accent : GKColor.textSecondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isChromaticMode ? "Chromatic mode on" : "Chromatic mode off")
+        .accessibilityHint("Names the nearest note for any pitch")
     }
 
     // MARK: Logic
