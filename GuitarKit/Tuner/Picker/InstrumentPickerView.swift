@@ -143,8 +143,11 @@ struct InstrumentPickerView: View {
     /// preset list still lives in the accordion below.
     @ViewBuilder
     private var mostUsedSection: some View {
-        // Resolve ids → instruments once. `compactMap` drops any unknown id.
-        let mostUsed = mostUsedInstrumentIDs.compactMap(InstrumentLibrary.instrument(id:))
+        // Resolve ids → instruments once. `compactMap` drops any unknown id. We
+        // call `instrument(id:)` inside a closure (rather than passing it as a
+        // function reference) so it runs in this main-actor view context — passing
+        // the main-actor method directly would warn under the project's isolation.
+        let mostUsed = mostUsedInstrumentIDs.compactMap { InstrumentLibrary.instrument(id: $0) }
 
         // Only render the section when there's something to show (a brand-new
         // install seeds it, so normally it's non-empty — but be defensive).

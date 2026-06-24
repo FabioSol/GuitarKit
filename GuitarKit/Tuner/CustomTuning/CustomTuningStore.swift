@@ -75,7 +75,7 @@ private struct CustomTuningDTO: Codable, Equatable, Sendable {
         Tuning(
             name: name,
             category: .alternate,
-            strings: stringMidiNumbers.map(Note.from(midiNumber:))
+            strings: stringMidiNumbers.map { Note.from(midiNumber: $0) }
         )
     }
 }

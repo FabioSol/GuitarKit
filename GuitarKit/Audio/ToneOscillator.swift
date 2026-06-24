@@ -108,7 +108,10 @@ enum ToneOscillator {
     ///   - frequencyHz: the pitch to synthesize, in Hertz.
     ///   - sampleRate: output samples per second (e.g. 44 100).
     /// - Returns: radians to add to the phase for each emitted sample.
-    static func phaseStep(frequencyHz: Double, sampleRate: Double) -> Float {
+    ///
+    /// `nonisolated` (pure math, no main-actor state) so the `nonisolated`
+    /// `Generator.init` can call it without a main-actor-isolation warning.
+    nonisolated static func phaseStep(frequencyHz: Double, sampleRate: Double) -> Float {
         // Guard a non-positive sample rate so we never divide by zero. (A
         // zero/negative frequency is allowed and simply yields a flat 0 Hz "DC"
         // signal — silence — which is harmless.)

@@ -58,7 +58,7 @@ public struct FretboardScale: Sendable {
                 midis.insert(note.midiNumber)
             }
         }
-        return midis.sorted().map(Note.from(midiNumber:))
+        return midis.sorted().map { Note.from(midiNumber: $0) }
     }
 
     /// The same notes, highest → lowest, for "play descending".
