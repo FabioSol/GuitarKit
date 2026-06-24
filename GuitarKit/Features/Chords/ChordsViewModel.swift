@@ -199,10 +199,16 @@ final class ChordsViewModel {
     /// `.noteNames` reads the note off the board at the chosen fret; `.degrees`
     /// works out which chord tone it is (1, 3, 5, ♭7…) from the chord's recipe.
     func label(forString string: Int) -> String? {
-        let voicing = currentVoicing
+        label(forString: string, in: currentVoicing, board: fretboard)
+    }
+
+    /// Same, but against an ALREADY-COMPUTED voicing + board, so the view can
+    /// resolve them ONCE per render and pass them to every cell instead of each
+    /// cell rebuilding the voicing (which re-ran the generator + library ~36×).
+    func label(forString string: Int, in voicing: ChordVoicing, board: Fretboard) -> String? {
         guard string < voicing.frets.count,
               let fret = voicing.frets[string],
-              let note = fretboard.note(string: string, fret: fret)
+              let note = board.note(string: string, fret: fret)
         else { return nil }
 
         switch labelMode {

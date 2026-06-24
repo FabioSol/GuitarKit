@@ -74,12 +74,16 @@ struct ScalesView: View {
         let strings = stringDisplayOrder()
         let frets = fretDisplayOrder()
 
+        // Build the scale projection ONCE per render and hand it to every cell,
+        // instead of each of the ~78 cells rebuilding the board + scale.
+        let fs = model.fretboardScale
+
         return ScrollView(.horizontal, showsIndicators: false) {
             VStack(spacing: 6) {
                 ForEach(strings, id: \.self) { string in
                     HStack(spacing: 6) {
                         ForEach(frets, id: \.self) { fret in
-                            cell(string: string, fret: fret)
+                            cell(string: string, fret: fret, fs: fs)
                         }
                     }
                 }
@@ -122,10 +126,10 @@ struct ScalesView: View {
             .accessibilityHidden(true)
     }
 
-    private func cell(string: Int, fret: Int) -> some View {
-        let fs = model.fretboardScale
+    private func cell(string: Int, fret: Int, fs: FretboardScale) -> some View {
         let inScale = fs.isInScale(string: string, fret: fret)
         let isRoot = fs.isRoot(string: string, fret: fret)
+        let label = inScale ? model.label(string: string, fret: fret, in: fs) : nil
 
         return ZStack {
             // A faint fret cell background so the grid reads even where empty.
@@ -136,7 +140,7 @@ struct ScalesView: View {
                 Circle()
                     .fill(isRoot ? GKColor.accent : GKColor.inTune.opacity(0.7))
                     .frame(width: 30, height: 30)
-                if let label = model.label(string: string, fret: fret) {
+                if let label {
                     Text(label)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
@@ -145,7 +149,7 @@ struct ScalesView: View {
         }
         .frame(width: 38, height: 34)
         .accessibilityHidden(!inScale)
-        .accessibilityLabel(inScale ? (model.label(string: string, fret: fret) ?? "") : "")
+        .accessibilityLabel(label ?? "")
     }
 
     // MARK: - Play controls

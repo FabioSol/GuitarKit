@@ -113,12 +113,16 @@ struct ChordsView: View {
         let strings = stringDisplayOrder()
         // Fret rows top→bottom: row 0 is the nut/open area, then frets 1…fretCount.
         let fretRows = Array(0...model.fretCount)
+        // Resolve the voicing + board ONCE per render and hand them to every cell
+        // / marker, instead of each cell re-running the generator + library.
+        let voicing = model.currentVoicing
+        let board = model.fretboard
 
         return VStack(spacing: 4) {
             // Top row: O (open) / X (muted) markers above each string column.
             HStack(spacing: 0) {
                 ForEach(strings, id: \.self) { string in
-                    Text(openMutedMarker(forString: string))
+                    Text(openMutedMarker(forString: string, voicing: voicing))
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(GKColor.textSecondary)
                         .frame(width: cellWidth)
@@ -130,7 +134,7 @@ struct ChordsView: View {
                 ForEach(fretRows, id: \.self) { fret in
                     HStack(spacing: 0) {
                         ForEach(strings, id: \.self) { string in
-                            cell(string: string, fret: fret)
+                            cell(string: string, fret: fret, voicing: voicing, board: board)
                         }
                     }
                 }
@@ -144,7 +148,7 @@ struct ChordsView: View {
                 // A thicker bar along the very top = the NUT, but only when this is
                 // an open-position shape (nothing fingered above fret 0). For shapes
                 // up the neck there's no nut on screen, so we hide it.
-                nutBar, alignment: .top
+                nutBar(voicing: voicing), alignment: .top
             )
         }
         // A fixed-size, centered portrait box (not stretched across the screen).
@@ -158,8 +162,7 @@ struct ChordsView: View {
 
     /// One cell of the grid: draws the string line + fret line, and a filled dot
     /// when the current voicing frets THIS string at THIS fret.
-    private func cell(string: Int, fret: Int) -> some View {
-        let voicing = model.currentVoicing
+    private func cell(string: Int, fret: Int, voicing: ChordVoicing, board: Fretboard) -> some View {
         let frettedHere = voicing.frets.indices.contains(string)
             && voicing.frets[string] == fret
             && fret > 0   // fret 0 is "open", shown by the O marker, not a dot
@@ -189,10 +192,10 @@ struct ChordsView: View {
             // The finger dot.
             if frettedHere {
                 Circle()
-                    .fill(isRoot(string: string, fret: fret) ? GKColor.accent
+                    .fill(isRoot(string: string, fret: fret, board: board) ? GKColor.accent
                                                               : GKColor.inTune.opacity(0.85))
                     .frame(width: 26, height: 26)
-                if let label = model.label(forString: string) {
+                if let label = model.label(forString: string, in: voicing, board: board) {
                     Text(label)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
@@ -205,8 +208,8 @@ struct ChordsView: View {
     /// The nut bar: a thick line at the top edge, shown only for open-position
     /// shapes (no fingered note sits above fret 0 in this voicing).
     @ViewBuilder
-    private var nutBar: some View {
-        if isOpenPosition {
+    private func nutBar(voicing: ChordVoicing) -> some View {
+        if isOpenPosition(voicing) {
             Rectangle()
                 .fill(GKColor.textPrimary.opacity(0.6))
                 .frame(height: 3)
@@ -266,17 +269,17 @@ struct ChordsView: View {
 
     /// Whether the current voicing is an OPEN-position shape: nothing is fingered
     /// above fret 0. Drives whether we draw the nut bar.
-    private var isOpenPosition: Bool {
+    private func isOpenPosition(_ voicing: ChordVoicing) -> Bool {
         // `lowestFrettedFret == nil` means a pure open/muted chord; otherwise it's
         // open position only when the lowest fingered fret is 1 (right at the nut).
-        guard let lowest = model.currentVoicing.lowestFrettedFret else { return true }
+        guard let lowest = voicing.lowestFrettedFret else { return true }
         return lowest <= 1
     }
 
     /// The "O" / "X" / " " marker to show above a string column: "O" if it's played
     /// open (fret 0), "X" if muted, blank if it's fingered (the dot speaks for it).
-    private func openMutedMarker(forString string: Int) -> String {
-        let frets = model.currentVoicing.frets
+    private func openMutedMarker(forString string: Int, voicing: ChordVoicing) -> String {
+        let frets = voicing.frets
         guard frets.indices.contains(string) else { return " " }
         switch frets[string] {
         case .none:   return "✕"   // muted
@@ -288,8 +291,8 @@ struct ChordsView: View {
     /// Whether the note at (string, fret) in the current voicing is the chord ROOT
     /// — used to color the root dot with the accent so it stands out, exactly like
     /// the Scales tool emphasizes its root.
-    private func isRoot(string: Int, fret: Int) -> Bool {
-        guard let note = model.fretboard.note(string: string, fret: fret) else { return false }
+    private func isRoot(string: Int, fret: Int, board: Fretboard) -> Bool {
+        guard let note = board.note(string: string, fret: fret) else { return false }
         return note.pitchClass == model.root
     }
 

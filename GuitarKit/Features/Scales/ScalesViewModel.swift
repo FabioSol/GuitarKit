@@ -87,11 +87,17 @@ final class ScalesViewModel {
 
     /// The label for an in-scale position (or nil when not in scale).
     func label(string: Int, fret: Int) -> String? {
-        let fs = fretboardScale
+        label(string: string, fret: fret, in: fretboardScale)
+    }
+
+    /// Same, but against an ALREADY-COMPUTED `FretboardScale`. The view computes
+    /// the scale ONCE per render and passes it to every cell, instead of each
+    /// cell rebuilding it (which rebuilt the board + scale ~78× per render).
+    func label(string: Int, fret: Int, in fs: FretboardScale) -> String? {
         guard fs.isInScale(string: string, fret: fret) else { return nil }
         switch labelMode {
         case .noteNames:
-            return fretboard.note(string: string, fret: fret)?.pitchClass.name
+            return fs.fretboard.note(string: string, fret: fret)?.pitchClass.name
         case .degrees:
             return fs.degree(string: string, fret: fret).map(String.init)
         }
