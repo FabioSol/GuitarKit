@@ -166,18 +166,16 @@ struct TunerView: View {
             backdrop
 
             VStack(spacing: 20) {
-                // Top-left: the instrument/tuning selector pill (opens the picker).
-                // Kept left so it never collides with the shell's top-right gear.
-                // Hidden in chromatic mode (which has no instrument/tuning).
+                // The instrument/tuning selector pill (opens the picker), centered
+                // at the top of the face. Hidden in chromatic mode (no tuning).
+                // It clears the shell's top-right gear because it's horizontally
+                // centered, well away from the corner.
                 if !isChromaticMode {
-                    HStack {
-                        InstrumentSelectorPill(
-                            instrumentName: session.currentInstrument.name,
-                            tuningName: session.currentTuning.name,
-                            action: { activeSheet = .picker }
-                        )
-                        Spacer()
-                    }
+                    InstrumentSelectorPill(
+                        instrumentName: session.currentInstrument.name,
+                        tuningName: session.currentTuning.name,
+                        action: { activeSheet = .picker }
+                    )
                 }
 
                 // The hero, flipped between targeted tuning (front) and the
@@ -188,8 +186,7 @@ struct TunerView: View {
                         model: session,
                         isToneMode: isToneMode,
                         playingStringIndex: playingStringIndex,
-                        onTapPeg: handlePegTap,
-                        visualization: heroVisualization
+                        onTapPeg: handlePegTap
                     )
                 } back: {
                     ChromaticReadoutView(reading: detector.reading)
@@ -222,6 +219,9 @@ struct TunerView: View {
                 }
             }
             .padding()
+            // Reserve room at the bottom so the level meter / controls clear the
+            // floating rotary nav.
+            .padding(.bottom, 90)
         }
         // Drive the session from the detector — but ONLY in targeted tuning mode.
         // In tone-mode the mic is off; in chromatic mode the readout reads the raw
@@ -286,6 +286,8 @@ struct TunerView: View {
         // hero, so it needs no handler here.)
         .onChange(of: devConfig.inTuneThresholdCents) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.smoothing) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.clarityThreshold) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.levelGateDB) { _, _ in applyDevOverrides() }
         #endif
     }
 
@@ -471,17 +473,6 @@ struct TunerView: View {
         )
     }
 
-    /// Which visualization the hero renders. In debug builds this follows the
-    /// dev panel; in release it's always the default linear meter (the dev knobs
-    /// don't exist there).
-    private var heroVisualization: TunerVisualizationKind {
-        #if DEBUG
-        devConfig.visualization
-        #else
-        .linear
-        #endif
-    }
-
     #if DEBUG
     /// The developer "Tuner Lab" button (a flask) that opens the A/B panel.
     private var devPanelButton: some View {
@@ -513,6 +504,8 @@ struct TunerView: View {
             )
         )
         detector.setSmoothing(emaFactor: Float(devConfig.smoothing))
+        detector.setClarityThreshold(Float(devConfig.clarityThreshold))
+        detector.setLevelGate(dB: Float(devConfig.levelGateDB))
     }
     #endif
 }

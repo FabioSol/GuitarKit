@@ -26,16 +26,6 @@ struct TunerDevPanelView: View {
     var body: some View {
         NavigationStack {
             Form {
-                // VISUALIZATION PICKER — built straight from the enum's cases.
-                Section("Visualization") {
-                    Picker("Style", selection: $config.visualization) {
-                        ForEach(TunerVisualizationKind.allCases) { kind in
-                            Text(kind.label).tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
                 // IN-TUNE THRESHOLD — how forgiving "in tune" is, in cents.
                 Section("In-tune threshold") {
                     Slider(value: $config.inTuneThresholdCents, in: 1...15, step: 1) {
@@ -46,6 +36,34 @@ struct TunerDevPanelView: View {
                         Text("15¢")
                     }
                     Text("± \(Int(config.inTuneThresholdCents))¢ counts as in tune")
+                        .font(GKFont.caption)
+                        .foregroundStyle(GKColor.textSecondary)
+                }
+
+                // CLARITY GATE — how periodic a signal must be to register.
+                Section("Detection — clarity gate") {
+                    Slider(value: $config.clarityThreshold, in: 0.3...0.95, step: 0.05) {
+                        Text("Clarity")
+                    } minimumValueLabel: {
+                        Text("catch")
+                    } maximumValueLabel: {
+                        Text("strict")
+                    }
+                    Text("Min clarity \(config.clarityThreshold, specifier: "%.2f") — lower catches more guitar, higher rejects more noise")
+                        .font(GKFont.caption)
+                        .foregroundStyle(GKColor.textSecondary)
+                }
+
+                // LEVEL GATE — the quietest signal we'll analyze.
+                Section("Detection — level gate") {
+                    Slider(value: $config.levelGateDB, in: -70...(-30), step: 1) {
+                        Text("Level")
+                    } minimumValueLabel: {
+                        Text("quiet")
+                    } maximumValueLabel: {
+                        Text("loud")
+                    }
+                    Text("Gate \(Int(config.levelGateDB)) dBFS — lower hears the decaying tail of a plucked note")
                         .font(GKFont.caption)
                         .foregroundStyle(GKColor.textSecondary)
                 }

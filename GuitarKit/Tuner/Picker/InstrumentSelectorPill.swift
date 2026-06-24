@@ -43,32 +43,34 @@ struct InstrumentSelectorPill: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                // Instrument name in primary text, tuning in secondary, separated
-                // by a thin middle dot — a compact "Guitar · Drop D".
+            HStack(spacing: 8) {
+                // Instrument name in primary text (semibold so the current
+                // instrument reads at a glance), tuning in secondary, separated by
+                // a thin middle dot — "Guitar · Drop D". Sized up from the old
+                // caption so it's an easy, prominent target at the top of the face.
                 Text(instrumentName)
-                    .font(GKFont.caption)
+                    .font(GKFont.body.weight(.semibold))
                     .foregroundStyle(GKColor.textPrimary)
 
                 Text("·")
-                    .font(GKFont.caption)
+                    .font(GKFont.body)
                     .foregroundStyle(GKColor.textSecondary)
 
                 Text(tuningName)
-                    .font(GKFont.caption)
+                    .font(GKFont.body)
                     .foregroundStyle(GKColor.textSecondary)
 
                 // A small chevron hints "tap to change / opens a sheet". Down-chevron
                 // is the conventional "reveals a picker" glyph.
                 Image(systemName: "chevron.down")
-                    .font(.caption2)
+                    .font(.footnote)
                     .foregroundStyle(GKColor.textSecondary)
                     // Decorative — the button's accessibility label already conveys
                     // that this opens the picker.
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
             // A capsule background in a faint fill so the pill reads as a tappable
             // chip without shouting. `.quaternary` is a system fill that stays
             // subtle in both light and dark.

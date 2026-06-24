@@ -2,11 +2,9 @@
 //  CentsMeterView.swift
 //  GuitarKit
 //
-//  One `TunerVisualization`: a linear cents meter. A horizontal track with a
-//  center "in tune" detent; an indicator slides left when flat, right when
-//  sharp, and centers + turns green when in tune. (The PRD keeps other variants
-//  — radial ring, needle, strobe — behind a dev-config A/B panel in slice #07;
-//  this is the default linear one.)
+//  The tuner's linear cents meter — GuitarKit's single deviation visualization.
+//  A horizontal track with a center "in tune" detent; an indicator slides left
+//  when flat, right when sharp, and centers + turns green when in tune.
 //
 //  NON-COLOR CHANNELS (PRD story 13): the indicator's horizontal POSITION (left
 //  = flat, right = sharp, center = in tune) and the small direction caret convey
@@ -126,11 +124,6 @@ struct CentsMeterView: View {
         }
     }
 }
-
-// `CentsMeterView`'s synthesized `init(cents:zone:)` already matches the
-// `TunerVisualization` contract, so it joins the swappable set with an empty
-// conformance. (See `TunerVisualization` for the why.)
-extension CentsMeterView: TunerVisualization {}
 
 #Preview {
     VStack(spacing: 40) {

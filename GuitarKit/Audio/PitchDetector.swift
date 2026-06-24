@@ -86,25 +86,30 @@ final class MPMPitchDetector: PitchDetecting {
     /// The de-jitter/smoothing stage. `var` because `push`/`reset` mutate it.
     @ObservationIgnored private var smoother = PitchSmoother()
 
-    /// MPM's confidence gate: estimates below this clarity are discarded.
-    @ObservationIgnored private let clarityThreshold: Float
+    /// MPM's confidence gate: estimates below this clarity are discarded. `var`
+    /// so it can be tuned live (the Tuner Lab). Default loosened to admit plucked
+    /// guitar — a decaying, slightly inharmonic string scores lower clarity than
+    /// a sustained voice, so a high gate silently dropped most guitar notes.
+    @ObservationIgnored private var clarityThreshold: Float
 
     /// The level gate, as a raw RMS amplitude. Below this we treat the buffer as
     /// silence/background and publish no reading — satisfying the PRD's "don't
     /// twitch on noise". We store it as linear RMS (converted from a dBFS
-    /// threshold once) so the per-buffer check is a cheap comparison.
-    @ObservationIgnored private let levelGateRMS: Float
+    /// threshold once) so the per-buffer check is a cheap comparison. `var` so it
+    /// can be tuned live.
+    @ObservationIgnored private var levelGateRMS: Float
 
     /// - Parameters:
     ///   - calculator: tuning context for note resolution (defaults to A=440,
     ///     equal temperament).
-    ///   - clarityThreshold: minimum MPM clarity to accept (0…1).
-    ///   - levelGateDB: quietest signal we'll analyze, in dBFS. −45 dBFS sits
-    ///     above typical room noise but below normal playing.
+    ///   - clarityThreshold: minimum MPM clarity to accept (0…1). Lower = catches
+    ///     more (decaying/quiet guitar) but risks twitching on noise.
+    ///   - levelGateDB: quietest signal we'll analyze, in dBFS. Lower admits the
+    ///     decaying tail of a plucked note instead of dropping it after the attack.
     init(
         calculator: PitchCalculator? = nil,
-        clarityThreshold: Float = 0.8,
-        levelGateDB: Float = -45
+        clarityThreshold: Float = 0.6,
+        levelGateDB: Float = -52
     ) {
         // Default to A=440 / equal temperament. We build it HERE rather than as a
         // default argument: under this project's main-actor-by-default isolation,
@@ -168,6 +173,18 @@ final class MPMPitchDetector: PitchDetecting {
     /// restart), which is exactly what we want when changing how smoothing behaves.
     func setSmoothing(emaFactor: Float) {
         smoother = PitchSmoother(emaFactor: emaFactor)
+    }
+
+    /// Set the MPM clarity gate live (Tuner Lab). Lower catches more guitar;
+    /// higher rejects more noise.
+    func setClarityThreshold(_ value: Float) {
+        clarityThreshold = min(max(value, 0), 1)
+    }
+
+    /// Set the level (RMS) gate live, from a dBFS value. Lower admits quieter /
+    /// decaying notes.
+    func setLevelGate(dB: Float) {
+        levelGateRMS = pow(10, dB / 20)
     }
 
     // MARK: Live wiring

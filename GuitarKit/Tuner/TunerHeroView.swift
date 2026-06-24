@@ -28,12 +28,6 @@ struct TunerHeroView: View {
     /// tune (tuning mode) or play-the-pitch (tone mode). Default no-op for previews.
     var onTapPeg: (Int) -> Void = { _ in }
 
-    /// Which deviation visualization to render below the headstock (linear meter,
-    /// radial ring, …). Defaults to the linear meter so previews, snapshots, and
-    /// release builds look exactly as before; the debug dev panel (slice #07)
-    /// swaps it live. See `TunerVisualizationKind`.
-    var visualization: TunerVisualizationKind = .linear
-
     /// Reduce Motion → the completion flourish degrades to a plain state change
     /// (no scale/glow animation), per the PRD accessibility requirement.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -67,10 +61,8 @@ struct TunerHeroView: View {
             } else if model.isComplete {
                 completionBanner
             } else {
-                // The chosen visualization (one interface, several looks). The
-                // default `.linear` is the familiar cents meter; `.radial` is the
-                // A/B alternative. See `TunerVisualizationKind`.
-                visualization.view(cents: model.deviationCents, zone: model.zone)
+                // The linear cents meter — GuitarKit's single tuner visualization.
+                CentsMeterView(cents: model.deviationCents, zone: model.zone)
                     .padding(.horizontal, 24)
 
                 if let next = model.suggestedStringIndex, next < model.targets.count {

@@ -25,9 +25,6 @@ import Observation
 @Observable
 final class TunerDevConfig {
 
-    /// Which look the hero renders. Flipping this swaps the visualization live.
-    var visualization: TunerVisualizationKind = .linear
-
     /// The "in tune" half-window, in cents. Lower = stricter (harder to satisfy),
     /// higher = more forgiving. Mirrors `TuningTolerance.inTuneCents`; the tuner
     /// reapplies it to the session whenever it changes. Default matches the
@@ -37,5 +34,13 @@ final class TunerDevConfig {
     /// The pitch detector's EMA smoothing factor (0…1). Near 0 = very smooth but
     /// laggy; near 1 = snappy but jittery. Default matches `PitchSmoother`'s 0.25.
     var smoothing: Double = 0.25
+
+    /// The MPM clarity gate (0…1). Lower catches more (decaying/quiet guitar);
+    /// higher rejects more noise. Default matches the detector.
+    var clarityThreshold: Double = 0.6
+
+    /// The input level gate in dBFS. Lower admits quieter / decaying notes;
+    /// higher ignores more background. Default matches the detector.
+    var levelGateDB: Double = -52
 }
 #endif
