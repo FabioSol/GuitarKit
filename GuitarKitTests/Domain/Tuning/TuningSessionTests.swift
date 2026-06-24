@@ -47,6 +47,17 @@ final class TuningSessionTests: XCTestCase {
         XCTAssertEqual(session.zone, .sharp)
     }
 
+    func test_clearLock_clearsDeviationAndZone() {
+        var session = makeSession()
+        session.lock(toStringIndex: 0)
+        session.update(detectedFrequency: hz(.e, 2) * pow(2.0, 10.0 / 1200.0), at: 0)
+        XCTAssertNotNil(session.deviationCents)
+        session.clearLock()
+        // Releasing the lock must not leave a phantom deviation/zone behind.
+        XCTAssertNil(session.deviationCents)
+        XCTAssertNil(session.zone)
+    }
+
     func test_deviation_isFlat_whenBelowTarget() {
         var session = makeSession()
         let flatA = hz(.a, 2) * pow(2.0, -8.0 / 1200.0)

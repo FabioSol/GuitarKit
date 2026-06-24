@@ -30,4 +30,13 @@ final class ReferencePitchTests: XCTestCase {
         XCTAssertEqual(ReferencePitch(hertz: 500).hertz, ReferencePitch.maxHz)
         XCTAssertEqual(ReferencePitch.maxHz, 466)
     }
+
+    func test_nonFiniteInput_fallsBackToConcertPitch() {
+        // NaN/±Inf can't be clamped meaningfully; the invariant "always a finite,
+        // in-range value" must still hold.
+        XCTAssertEqual(ReferencePitch(hertz: .nan).hertz, 440)
+        XCTAssertEqual(ReferencePitch(hertz: .infinity).hertz, 440)
+        XCTAssertEqual(ReferencePitch(hertz: -.infinity).hertz, 440)
+        XCTAssertTrue(ReferencePitch(hertz: .nan).hertz.isFinite)
+    }
 }

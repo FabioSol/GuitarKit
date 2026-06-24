@@ -46,8 +46,14 @@ public struct Fretboard: Sendable {
 
     /// The note sounding at `(string, fret)`, or `nil` for an out-of-range index.
     /// Fret 0 is the (capo-raised) open string; each higher fret adds a semitone.
+    ///
+    /// `fretCount` is the PHYSICAL neck length. A capo at fret N shortens the
+    /// reachable neck above it, so only frets `0...(fretCount − N)` are playable —
+    /// without this clamp, `ascendingNotes()` would emit pitches N semitones above
+    /// the highest real fret (notes the player can't actually reach).
     public func note(string: Int, fret: Int) -> Note? {
-        guard openStrings.indices.contains(string), fret >= 0, fret <= fretCount else { return nil }
+        let usableFrets = fretCount - capo.fret
+        guard openStrings.indices.contains(string), fret >= 0, fret <= usableFrets else { return nil }
         // The capo raises the open string first; the fret then adds on top.
         let capoOpen = capo.transpose(openStrings[string])
         return Note.from(midiNumber: capoOpen.midiNumber + fret)

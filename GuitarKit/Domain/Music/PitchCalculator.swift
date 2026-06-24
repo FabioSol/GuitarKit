@@ -146,9 +146,10 @@ public struct PitchCalculator: Sendable {
     /// calculator's calibration — so it reads naturally as `PitchCalculator
     /// .cents(from:to:)` and can be reused anywhere.
     public static func cents(from detectedHz: Double, to targetHz: Double) -> Double {
-        // Guard against non-positive inputs that would make log2 undefined
-        // (a detector can momentarily report 0 Hz during silence).
-        guard detectedHz > 0, targetHz > 0 else { return 0 }
+        // Guard against non-positive OR non-finite inputs that would make log2
+        // undefined or emit NaN/Inf (a detector can momentarily report 0 Hz
+        // during silence, or a bad estimate can be ±Inf/NaN).
+        guard detectedHz > 0, targetHz > 0, detectedHz.isFinite, targetHz.isFinite else { return 0 }
         return 1200.0 * log2(detectedHz / targetHz)
     }
 
@@ -176,7 +177,10 @@ public struct PitchCalculator: Sendable {
     /// - Returns: the nearest `Note` and the signed cent offset (positive =
     ///   sharp, negative = flat), or `nil` for a non-positive frequency.
     public func nearestNote(toFrequency hz: Double) -> (note: Note, centOffset: Double)? {
-        guard hz > 0 else { return nil }
+        // Reject non-positive AND non-finite input: `+Inf` would make `midiExact`
+        // infinite and `Int(.rounded())` TRAP. (`hz > 0` alone lets `+Inf` through;
+        // `NaN > 0` is already false.)
+        guard hz > 0, hz.isFinite else { return nil }
 
         // Fractional MIDI number, then round to the closest actual note.
         let midiExact = 69.0 + 12.0 * log2(hz / referenceA.hertz)

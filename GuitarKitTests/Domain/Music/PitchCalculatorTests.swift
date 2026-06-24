@@ -106,4 +106,28 @@ final class PitchCalculatorTests: XCTestCase {
         // Detector reports 0 Hz during silence; must not crash or return NaN.
         XCTAssertEqual(PitchCalculator.cents(from: 0, to: 440), 0)
     }
+
+    func test_cents_safeForNonFiniteInput_returnsZero() {
+        XCTAssertEqual(PitchCalculator.cents(from: .infinity, to: 440), 0)
+        XCTAssertEqual(PitchCalculator.cents(from: .nan, to: 440), 0)
+        XCTAssertEqual(PitchCalculator.cents(from: 440, to: .infinity), 0)
+    }
+
+    // MARK: Nearest note — non-finite inputs must not crash
+
+    func test_nearestNote_nonFiniteInput_returnsNil() {
+        let calc = PitchCalculator()
+        // `+Inf` once trapped in `Int(midiExact.rounded())`; all of these are nil.
+        XCTAssertNil(calc.nearestNote(toFrequency: .infinity))
+        XCTAssertNil(calc.nearestNote(toFrequency: .nan))
+        XCTAssertNil(calc.nearestNote(toFrequency: 0))
+        XCTAssertNil(calc.nearestNote(toFrequency: -100))
+    }
+
+    func test_nearestNote_concertA_isA4() {
+        let calc = PitchCalculator()
+        let result = calc.nearestNote(toFrequency: 440)
+        XCTAssertEqual(result?.note, Note(pitchClass: .a, octave: 4))
+        XCTAssertEqual(result?.centOffset ?? .nan, 0, accuracy: 0.001)
+    }
 }

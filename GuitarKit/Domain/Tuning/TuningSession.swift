@@ -137,6 +137,11 @@ public struct TuningSession: Equatable, Sendable {
     public mutating func clearLock() {
         isManuallyLocked = false
         inToleranceSince = nil
+        // Clear the deviation too (mirroring `lock`), otherwise `deviationCents`
+        // and `zone` stay stale until the next `update`, painting a phantom
+        // in-tune/flat state and risking a mis-fired feedback event on the next
+        // transition.
+        deviationCents = nil
     }
 
     // MARK: The core step

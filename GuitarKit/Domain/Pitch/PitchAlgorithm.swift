@@ -87,8 +87,9 @@ public enum PitchAlgorithm: String, CaseIterable, Sendable {
     }
 
     /// Combine MPM + YIN:
-    ///   • Both fire & AGREE (within ~40 cents) → corroborated: take the
-    ///     better-located estimate and nudge its clarity up.
+    ///   • Both fire & AGREE (within ~40 cents) → corroborated: BLEND the two
+    ///     frequencies (weighted by clarity) for a more accurate result than
+    ///     either alone, and nudge the confidence up.
     ///   • Both fire & DISAGREE (e.g. one made an octave error) → trust the more
     ///     confident detector.
     ///   • Only one fires → use it.
@@ -102,8 +103,14 @@ public enum PitchAlgorithm: String, CaseIterable, Sendable {
         case let (m?, y?):
             let cents = abs(1200 * log2(m.frequency / y.frequency))
             if cents <= 40 {
-                let best = m.clarity >= y.clarity ? m : y
-                return PitchEstimate(frequency: best.frequency,
+                // Corroborated: a clarity-weighted average of the two agreeing
+                // frequencies is more accurate than picking one (which could be
+                // the less-accurate of the two by up to ~40 cents).
+                let totalClarity = m.clarity + y.clarity
+                let frequency = totalClarity > 0
+                    ? (m.frequency * m.clarity + y.frequency * y.clarity) / totalClarity
+                    : (m.frequency + y.frequency) / 2
+                return PitchEstimate(frequency: frequency,
                                      clarity: min(1, max(m.clarity, y.clarity) + 0.1))
             } else {
                 return m.clarity >= y.clarity ? m : y

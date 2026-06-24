@@ -198,6 +198,15 @@ enum ToneOscillator {
             )
         }
 
+        /// Retune by handing in a precomputed phase step directly (continuous
+        /// phase, like `setFrequency`). This lets the caller compute the step
+        /// where the sample rate is known (e.g. the main actor) and hand a single
+        /// scalar to the audio thread, so the generator stays touched by ONE
+        /// thread only.
+        mutating func setPhaseStep(_ step: Float) {
+            phaseStep = step
+        }
+
         /// Produce the next sample and advance the phase. Called once per output
         /// frame from the render callback.
         mutating func nextSample() -> Float {

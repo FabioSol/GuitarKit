@@ -75,18 +75,30 @@ final class ToneGenerator {
 
     // MARK: Real-time render state
     //
-    // The next three are read/written from the RENDER CALLBACK, which runs on a
-    // real-time audio thread, NOT the main actor. They're `nonisolated(unsafe)`
-    // for the same reason `AudioInputEngine.bufferHandler` is: this is a
-    // `@MainActor` type, but the audio thread must legally touch these. We only
-    // hand the audio thread plain numbers it owns, and we never read them back
-    // on the main actor while audio is running, so there's no real data race —
-    // `unsafe` is us telling the compiler "I've reasoned about this."
+    // CONCURRENCY DISCIPLINE: `generator` is a multi-field struct (phase +
+    // phaseStep), so it must be touched by exactly ONE thread. We keep it
+    // AUDIO-THREAD-ONLY: the main actor never mutates it. To retarget the pitch,
+    // `play(...)` writes a single SCALAR — `targetPhaseStep` — which the render
+    // callback reads and applies to the generator on the audio thread. Scalars
+    // (Float/Bool) are word-sized, so this hand-off has no torn-read hazard. This
+    // replaces the old code that mutated `generator` from the main actor (a real
+    // data race, since the audio thread mutates its `phase` concurrently).
+    //
+    // `nonisolated(unsafe)` is us telling the compiler we've reasoned about the
+    // threading (same pattern as `AudioInputEngine`).
 
-    /// The phase-walking sample source from the pure oscillator. The render
-    /// callback advances it; `play(...)`/`stop()` retarget or silence it.
+    /// The phase-walking sample source. Touched ONLY by the render callback.
     @ObservationIgnored nonisolated(unsafe) private var generator =
         ToneOscillator.Generator(frequencyHz: 0, sampleRate: 44_100)
+
+    /// The pitch hand-off: the main actor (`play`) writes the desired phase step
+    /// here; the render callback reads it and retunes `generator`. A single Float,
+    /// so the cross-thread write/read can't tear.
+    @ObservationIgnored nonisolated(unsafe) private var targetPhaseStep: Float = 0
+
+    /// The phase step the render callback has already applied — AUDIO-THREAD-ONLY,
+    /// so the callback only retunes when `targetPhaseStep` actually changed.
+    @ObservationIgnored nonisolated(unsafe) private var appliedPhaseStep: Float = -1
 
     /// The envelope's CURRENT gain (0 = silent … 1 = full). Multiplying every
     /// sample by this and easing it up/down gives a smooth ATTACK (fade-in) and
@@ -139,9 +151,12 @@ final class ToneGenerator {
             return
         }
 
-        // Retune the oscillator to the new pitch. We do NOT reset its phase, so
-        // switching strings mid-sustain glides instead of popping.
-        generator.setFrequency(frequencyHz, sampleRate: sampleRate)
+        // Retune the oscillator to the new pitch — but NOT by touching `generator`
+        // (the audio thread owns it). We compute the phase step HERE (sampleRate
+        // is known on the main actor) and hand it to the render callback via the
+        // scalar `targetPhaseStep`; the callback applies it on the audio thread.
+        // Phase isn't reset, so switching strings mid-sustain glides, not pops.
+        targetPhaseStep = ToneOscillator.phaseStep(frequencyHz: frequencyHz, sampleRate: sampleRate)
 
         // Aim the envelope at full volume → the render callback fades the tone IN.
         envelopeTarget = 1
@@ -202,8 +217,12 @@ final class ToneGenerator {
         sampleRate = outputFormat.sampleRate
 
         // Re-seed the generator at the real sample rate (the init used a default
-        // guess). It starts silent (envelopeGain 0), so this is click-free.
+        // guess). It starts silent (envelopeGain 0), so this is click-free. Safe
+        // to write `generator` here: the engine isn't running yet, so no audio
+        // thread is touching it. Reset `appliedPhaseStep` so the render callback
+        // re-applies the current target on the first frame.
         generator = ToneOscillator.Generator(frequencyHz: 0, sampleRate: sampleRate)
+        appliedPhaseStep = -1
 
         // Build the source node, attach it, and wire it to the speaker.
         let node = makeSourceNode(format: outputFormat)
@@ -235,6 +254,15 @@ final class ToneGenerator {
             // `UnsafeMutableAudioBufferListPointer` wraps the C buffer list as a
             // Swift collection so we can iterate its channels safely.
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+
+            // Apply any pending pitch change handed over by `play(...)` — done
+            // HERE (on the audio thread) so `generator` is only ever touched by
+            // this thread. Once per buffer, only when it actually changed.
+            let step = self.targetPhaseStep
+            if step != self.appliedPhaseStep {
+                self.generator.setPhaseStep(step)
+                self.appliedPhaseStep = step
+            }
 
             // Synthesize one frame at a time. We compute the (mono) sample once,
             // then write it into EVERY output channel (so a stereo speaker hears

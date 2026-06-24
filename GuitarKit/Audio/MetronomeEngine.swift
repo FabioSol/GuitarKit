@@ -159,6 +159,10 @@ final class MetronomeEngine {
         stop()
         if isSetUp {
             engine.stop()
+            // DETACH the player too. `setUpIfNeeded()` calls `engine.attach(player)`
+            // and `isSetUp` is going false here, so without detaching, a later
+            // start would attach the same node twice — which AVAudioEngine rejects.
+            engine.detach(player)
             isSetUp = false
         }
     }

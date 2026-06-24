@@ -48,6 +48,15 @@ final class FretboardTests: XCTestCase {
         XCTAssertEqual(capoed.note(string: 0, fret: 3), n(.a, 2))
     }
 
+    func test_capo_shortensReachableNeck() {
+        // A capo at fret 2 on a 12-fret board leaves only 10 frets above it; asking
+        // past that must return nil (no phantom notes above the real neck).
+        let capoed = Fretboard(tuning: InstrumentLibrary.guitar6.tunings[0],
+                               capo: Capo(fret: 2), fretCount: 12)
+        XCTAssertNotNil(capoed.note(string: 0, fret: 10))
+        XCTAssertNil(capoed.note(string: 0, fret: 11))
+    }
+
     // MARK: - Scale membership / root / degree
 
     func test_cMajor_membership_onLowEString() {

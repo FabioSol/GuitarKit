@@ -44,6 +44,9 @@ public struct ReferencePitch: Equatable, Hashable, Sendable {
     /// just past the end simply sticks at the end). If a caller needs to *detect*
     /// out-of-range input, they can compare against `minHz`/`maxHz` first.
     public init(hertz: Double) {
+        // Non-finite input (NaN/±Inf) can't be meaningfully clamped — relying on
+        // min/max's NaN quirks is fragile — so fall back to concert pitch.
+        guard hertz.isFinite else { self.hertz = 440; return }
         // `min`/`max` compose into a clamp: first cap the top, then floor the
         // bottom. e.g. clamp(500) -> min(500,466)=466 -> max(466,415)=466.
         self.hertz = Swift.max(Self.minHz, Swift.min(Self.maxHz, hertz))
