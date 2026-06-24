@@ -32,6 +32,11 @@ struct MetronomeView: View {
     /// be recreated each time).
     @State private var model = MetronomeViewModel()
 
+    /// Global preferences, supplied by the app shell. The metronome's SOUND SET
+    /// and PER-BEAT HAPTIC live in Settings (off the face), so we read them here
+    /// and push them into the model. Optional so previews work without a store.
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
+
     // MARK: - Drag tracking
     //
     // To turn a drag into a TEMPO CHANGE we need the *incremental* movement
@@ -72,10 +77,26 @@ struct MetronomeView: View {
                     configControls
                 }
                 .padding()
+                // Reserve room at the bottom so the last controls clear the
+                // floating rotary nav.
+                .padding(.bottom, 96)
             }
         }
         // Release the audio session and stop the click when leaving the tool.
         .onDisappear { model.shutdown() }
+        // Sync the sound set + per-beat haptic from Settings (their home now),
+        // on appear and whenever the user changes them in Settings.
+        .onAppear { applyMetronomeSettings() }
+        .onChange(of: settings?.metronomeSoundSet) { _, _ in applyMetronomeSettings() }
+        .onChange(of: settings?.metronomeHapticsEnabled) { _, _ in applyMetronomeSettings() }
+    }
+
+    /// Copy the Settings-owned sound set + haptic into the model (which pushes
+    /// them to the engine, restarting if it's playing). No-op without a store.
+    private func applyMetronomeSettings() {
+        guard let settings else { return }
+        model.setSoundSet(settings.metronomeSoundSet)
+        model.setHapticsEnabled(settings.metronomeHapticsEnabled)
     }
 
     // MARK: - The dial
@@ -169,7 +190,16 @@ struct MetronomeView: View {
     private func beatDot(accent: BeatAccent, isActive: Bool) -> some View {
         // A generous transparent hit target so the dots are easy to tap without
         // requiring pixel precision over the small visible shape.
-        let hitSize: CGFloat = 30
+        let hitSize: CGFloat = 32
+
+        // The color the dot glows when it's the beat currently sounding.
+        let glow: Color = {
+            switch accent {
+            case .accent: return GKColor.accent
+            case .normal: return GKColor.inTune
+            case .muted:  return GKColor.textSecondary
+            }
+        }()
 
         ZStack {
             switch accent {
@@ -178,22 +208,33 @@ struct MetronomeView: View {
                     .fill(isActive ? GKColor.accent : GKColor.accent.opacity(0.85))
                     .frame(width: 18, height: 18)
             case .normal:
+                // Filled when sounding (a clear bright pulse), hollow otherwise.
                 Circle()
-                    .stroke(isActive ? GKColor.inTune : GKColor.textSecondary.opacity(0.7),
-                            lineWidth: 2.5)
-                    .frame(width: 13, height: 13)
+                    .fill(isActive ? GKColor.inTune : Color.clear)
+                    .overlay(
+                        Circle().stroke(isActive ? GKColor.inTune
+                                                 : GKColor.textSecondary.opacity(0.7),
+                                        lineWidth: 2.5)
+                    )
+                    .frame(width: 14, height: 14)
             case .muted:
                 // A dim hollow ring with an × — clearly "this one is silent."
                 ZStack {
                     Circle()
-                        .stroke(GKColor.textSecondary.opacity(0.35), lineWidth: 1.5)
-                        .frame(width: 13, height: 13)
+                        .stroke(GKColor.textSecondary.opacity(isActive ? 0.7 : 0.35),
+                                lineWidth: 1.5)
+                        .frame(width: 14, height: 14)
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(GKColor.textSecondary.opacity(0.45))
+                        .foregroundStyle(GKColor.textSecondary.opacity(isActive ? 0.8 : 0.45))
                 }
             }
         }
+        // Make the SOUNDING beat unmistakable: pop it larger and wrap it in a
+        // colored halo. The `.animation` on the ring (keyed to currentBeat)
+        // makes this a quick pulse as the beat moves around.
+        .scaleEffect(isActive ? 1.5 : 1.0)
+        .shadow(color: glow.opacity(isActive ? 0.9 : 0), radius: isActive ? 7 : 0)
         // Expand the tappable area to `hitSize` while keeping the drawn shape
         // small. `contentShape` makes the whole (transparent) frame hit-testable.
         .frame(width: hitSize, height: hitSize)
@@ -322,14 +363,16 @@ struct MetronomeView: View {
         }
     }
 
-    /// A small circular ± stepper button. Factored out so the two share a look.
+    /// A circular ± stepper button. `size` lets callers use a compact version
+    /// (the time-signature row) vs the larger tap-tempo steppers.
     private func stepperButton(symbol: String, label: String,
+                               size: CGFloat = 48,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: size * 0.42, weight: .semibold))
                 .foregroundStyle(GKColor.textPrimary)
-                .frame(width: 48, height: 48)
+                .frame(width: size, height: size)
                 .background(Circle().fill(GKColor.textSecondary.opacity(0.15)))
         }
         .accessibilityLabel(label)
@@ -338,16 +381,15 @@ struct MetronomeView: View {
     // MARK: - Configuration controls (slice #16)
     //
     // The musical setup below the transport: time signature (presets + a custom
-    // beat-count stepper), subdivision, sound set, and the silent-practice
-    // haptic toggle. Each is a labeled row so the screen reads top-to-bottom.
+    // beat-count stepper) and subdivision. The sound set and the per-beat haptic
+    // live in Settings (kept off the face to reduce on-screen clutter); this view
+    // syncs them from the store — see `applyMetronomeSettings()`.
 
     /// All the configuration rows, stacked.
     private var configControls: some View {
         VStack(spacing: 18) {
             timeSignatureRow
             subdivisionRow
-            soundSetRow
-            hapticsRow
         }
         .padding(.top, 8)
     }
@@ -368,15 +410,16 @@ struct MetronomeView: View {
                 .accessibilityLabel("Time signature presets")
 
                 // Custom beat-count stepper: change just the number of beats.
-                HStack(spacing: 0) {
-                    stepperButton(symbol: "minus", label: "Fewer beats") {
+                // Compact (34pt) steppers keep this row short.
+                HStack(spacing: 2) {
+                    stepperButton(symbol: "minus", label: "Fewer beats", size: 34) {
                         model.setCustomBeats(model.beatsPerBar - 1)
                     }
                     Text("\(model.beatsPerBar) beats")
-                        .font(GKFont.body)
+                        .font(GKFont.caption)
                         .foregroundStyle(GKColor.textSecondary)
-                        .frame(minWidth: 64)
-                    stepperButton(symbol: "plus", label: "More beats") {
+                        .frame(minWidth: 56)
+                    stepperButton(symbol: "plus", label: "More beats", size: 34) {
                         model.setCustomBeats(model.beatsPerBar + 1)
                     }
                 }
@@ -398,34 +441,6 @@ struct MetronomeView: View {
         }
     }
 
-    /// Sound-set picker (Classic / Wood / Digital) as selectable pills.
-    private var soundSetRow: some View {
-        configRow(title: "Sound") {
-            HStack(spacing: 8) {
-                ForEach(MetronomeSoundSet.allCases, id: \.self) { set in
-                    selectablePill(set.label, isSelected: model.soundSet == set) {
-                        model.setSoundSet(set)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The per-beat haptic toggle — the "silent practice" switch. Bound through
-    /// the model's setter so flipping it pushes config (and restarts if playing).
-    private var hapticsRow: some View {
-        configRow(title: "Per-beat haptic") {
-            Toggle("", isOn: Binding(
-                get: { model.hapticsEnabled },
-                set: { model.setHapticsEnabled($0) }
-            ))
-            .labelsHidden()
-            .tint(GKColor.accent)
-            .accessibilityLabel("Per-beat haptic")
-            .accessibilityHint("Feel each beat; mute all beats for silent practice")
-        }
-    }
-
     // MARK: - Small reusable control bits
 
     /// A labeled configuration row: a title on the left, the control on the
@@ -441,16 +456,21 @@ struct MetronomeView: View {
         }
     }
 
-    /// A static "pill" label (used for the time-signature menu trigger).
+    /// A static "pill" label (used for the time-signature menu trigger). Kept
+    /// short (low vertical padding) so it doesn't tower over the row.
     private func pillLabel(_ text: String) -> some View {
         Text(text)
-            .font(GKFont.body.weight(.semibold))
+            .font(GKFont.caption.weight(.semibold))
             .foregroundStyle(GKColor.accent)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            // Keep the signature on ONE line — without this the HStack squeezes
+            // the menu label and "4/4" wraps onto two lines.
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(GKColor.accent, lineWidth: 2)
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(GKColor.accent, lineWidth: 1.5)
             )
     }
 

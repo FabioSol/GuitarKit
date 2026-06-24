@@ -37,9 +37,11 @@
 //  "no buffer to hang a completion on" case.
 //
 //  CONFIGURATION CONTRACT (matches `bpm`'s existing one):
-//  All config (`bpm`, `beatsPerBar`, `subdivision`, `accents`, `soundSet`,
-//  haptics) is read at `start()`. The view model changes config then RESTARTS
-//  the engine to make it audible immediately — same pattern as tempo today.
+//  All config (`bpm`, `beatsPerBar`, `subdivision`, `accents`, `soundSet`) is
+//  read at `start()`. The view model changes config then RESTARTS the engine to
+//  make it audible immediately — same pattern as tempo today. This class is
+//  purely AUDIO; the beat-ring highlight + per-beat haptic are driven by the
+//  view model's own drift-free clock (a playback completion lags the beat).
 //
 
 import AVFoundation
@@ -70,10 +72,6 @@ final class MetronomeEngine {
     /// The click timbre. Picks the accent / normal / subdivision sounds.
     var soundSet: MetronomeSoundSet = .classic
 
-    /// Whether to fire a per-BEAT haptic. Independent of sound, so "everything
-    /// muted + haptics on" = silent practice (feel + the visual ring only).
-    var hapticsEnabled = false
-
     /// Whether the click is currently running.
     private(set) var isPlaying = false
 
@@ -94,10 +92,9 @@ final class MetronomeEngine {
 
     /// A SILENT buffer (zeros), the same length as a click, scheduled in place of
     /// a muted beat. Scheduling silence — rather than scheduling nothing — means
-    /// EVERY tick has a real buffer with a `.dataPlayedBack` completion. That in
-    /// turn lets us (a) keep the rolling window turning uniformly and (b) fire the
-    /// per-beat haptic from the completion (i.e. when the beat actually PLAYS),
-    /// which is what makes silent practice's buzz land on time.
+    /// EVERY tick has a real buffer with a `.dataPlayedBack` completion, which
+    /// keeps the rolling schedule window turning uniformly even through muted
+    /// beats (so timing never stalls).
     @ObservationIgnored private var silentBuffer: AVAudioPCMBuffer?
 
     /// How many ticks we keep scheduled ahead of "now." A small cushion so the
@@ -111,10 +108,6 @@ final class MetronomeEngine {
     /// The subdivision in effect for THIS run, captured at `start()` so a mid-run
     /// config change can't desync the tick math from what's actually scheduled.
     @ObservationIgnored private var ticksPerBeat = 1
-
-    /// Optional per-beat haptic. Created lazily the first time haptics are on, so
-    /// we don't allocate a Taptic generator for users who never enable them.
-    @ObservationIgnored private var haptics: MetronomeHaptics?
 
     init() {}
 
@@ -139,13 +132,6 @@ final class MetronomeEngine {
 
         // Rebuild the role buffers for the selected sound set / format.
         rebuildBuffers()
-
-        // Warm up haptics if they're on for this run.
-        if hapticsEnabled {
-            let h = haptics ?? MetronomeHaptics()
-            haptics = h
-            h.prepare()
-        }
 
         nextTickToSchedule = 0
         isPlaying = true
@@ -258,23 +244,15 @@ final class MetronomeEngine {
     ///
     /// SUBDIVISIONS: the offset comes from `tickOffset(...)` (finer than beats),
     /// and which buffer we use depends on whether the tick is a beat (and, for a
-    /// beat, its accent — muted uses the silent buffer).
-    ///
-    /// HAPTIC TIMING: we fire the per-beat haptic from the buffer's PLAYBACK
-    /// completion (`.dataPlayedBack`), NOT at schedule-time. Schedule-time would
-    /// fire it up to a whole `scheduleWindow` of ticks early (a burst at start,
-    /// then a steady but audio-misaligned lead). Firing on completion makes the
-    /// buzz land with the click — including for muted beats, which now schedule
-    /// silence so they still get a completion. That's what keeps silent practice
-    /// honest. (`.muted` beats buzz at normal strength; only the accent gets the
-    /// stronger tap.)
+    /// beat, its accent — muted uses the silent buffer). The per-beat VISUAL +
+    /// HAPTIC feedback is NOT driven from here (a playback completion fires after
+    /// the click plays, plus output latency, so it lags); the view model runs a
+    /// drift-free anchored clock for that. This method is purely audio.
     private func scheduleNextTick() {
         let tick = nextTickToSchedule
         nextTickToSchedule += 1
 
-        let plan = plan(forTick: tick)
-        let isBeat = plan.isBeat
-        let accented = plan.accent == .accent
+        let buffer = plan(forTick: tick).buffer
 
         // The drift-free sample offset of this tick (anchored to tick 0).
         let offset = MetronomeSequencer.tickOffset(ofTick: tick, bpm: bpm,
@@ -282,26 +260,23 @@ final class MetronomeEngine {
                                                     ticksPerBeat: ticksPerBeat)
         let when = AVAudioTime(sampleTime: AVAudioFramePosition(offset), atRate: sampleRate)
 
-        guard let buffer = plan.buffer else {
+        guard let buffer else {
             // Safety net: if (rarely) a buffer failed to synthesize, keep the
-            // window turning so the click doesn't stall. We still buzz the beat so
-            // silent practice keeps its pulse.
+            // window turning so the click doesn't stall.
             Task { @MainActor [weak self] in
                 guard let self, self.isPlaying else { return }
-                if self.hapticsEnabled, isBeat { self.haptics?.beat(accented: accented) }
                 self.scheduleNextTick()
             }
             return
         }
 
         player.scheduleBuffer(buffer, at: when, options: [],
-                              completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                              completionCallbackType: .dataPlayedBack) { _ in
             // Fires on an audio thread once this tick has PLAYED. Hop to the main
-            // actor, buzz on beats (so the haptic lands with the sound), and queue
-            // one more tick to refill the window.
-            Task { @MainActor in
+            // actor (capturing self weakly there) and queue one more tick to
+            // refill the window.
+            Task { @MainActor [weak self] in
                 guard let self, self.isPlaying else { return }
-                if self.hapticsEnabled, isBeat { self.haptics?.beat(accented: accented) }
                 self.scheduleNextTick()
             }
         }

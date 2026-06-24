@@ -18,10 +18,10 @@
 //  1. The engine applies a new `bpm` only on the NEXT `start()`. So when the user
 //     changes tempo WHILE playing, we restart (stop + start) to make it audible
 //     immediately. See `applyBPMChangeWhilePlaying()`.
-//  2. The engine doesn't publish "which beat is playing right now," and we don't
-//     want to touch it. So the beat-ring is driven by a SEPARATE, display-only
-//     counter advanced by a `Task` that sleeps one beat-duration at a time. That
-//     counter is cosmetic — a tiny visual drift vs. the real audio is acceptable.
+//  2. The beat-ring is lit straight from the engine: the engine calls back
+//     `onBeat(index)` the instant each beat plays, and we store it in
+//     `currentBeat`. That keeps the lit dot exactly in step with the audio (no
+//     drift), so there's no separate timer to wander off the click.
 //
 
 import Observation
@@ -99,13 +99,9 @@ final class MetronomeViewModel {
 
     /// Whether the per-beat haptic fires. With everything muted, this is the
     /// SILENT-PRACTICE mode: you feel and see the pulse with no audible click.
-    /// Default off. Restarts (cheap) so the engine warms its Taptic generator.
-    var hapticsEnabled = false {
-        didSet {
-            guard oldValue != hapticsEnabled else { return }
-            pushConfigAndRestartIfPlaying()
-        }
-    }
+    /// Default off. The beat clock reads this LIVE each beat, so toggling it
+    /// needs no engine restart.
+    var hapticsEnabled = false
 
     /// Per-beat emphasis, one entry per beat (index 0 = the downbeat). The view
     /// reads this to draw each dot's state and calls `cycleAccent(at:)` to change
@@ -133,15 +129,20 @@ final class MetronomeViewModel {
     /// The pure tap-tempo estimator. `var` because each tap mutates it.
     @ObservationIgnored private var tapTempo = TapTempo()
 
-    /// The cosmetic beat-ring driver. Cancelled on stop/shutdown. Optional
-    /// because there's no task when we're stopped.
+    /// The per-beat haptic generator, created lazily the first time haptics fire.
+    @ObservationIgnored private var haptics: MetronomeHaptics?
+
+    /// The BEAT CLOCK: a drift-free, main-actor `Task` that lights `currentBeat`
+    /// and buzzes the haptic at each beat. Anchored to playback start with
+    /// ABSOLUTE per-beat targets (not incremental sleeps), so it never accumulates
+    /// drift and stays locked to the audio (which is anchored the same way).
     @ObservationIgnored private var beatTask: Task<Void, Never>?
 
     init() {}
 
     // MARK: - Transport (start / stop / toggle)
 
-    /// Start the click at the current tempo and begin animating the beat-ring.
+    /// Start the click at the current tempo and light the beat-ring.
     func start() {
         guard !isPlaying else { return }
 
@@ -151,10 +152,10 @@ final class MetronomeViewModel {
         try? coordinator.configureForPlayback()
 
         pushConfig()            // copy bpm + all config into the engine
+        currentBeat = 0
         engine.start()          // the engine reads its config on start()
         isPlaying = true
-
-        startBeatRing()
+        startBeatClock()        // light the ring + buzz, locked to the same start
     }
 
     /// Copy the whole current configuration into the engine. The engine reads
@@ -166,15 +167,14 @@ final class MetronomeViewModel {
         engine.subdivision = subdivision
         engine.accents = beatAccents
         engine.soundSet = soundSet
-        engine.hapticsEnabled = hapticsEnabled
     }
 
-    /// Stop the click and freeze the beat-ring.
+    /// Stop the click and reset the beat-ring to the downbeat.
     func stop() {
         guard isPlaying else { return }
         engine.stop()
         isPlaying = false
-        stopBeatRing()
+        stopBeatClock()
     }
 
     /// Convenience for the single play/stop button.
@@ -212,9 +212,9 @@ final class MetronomeViewModel {
     /// `.onDisappear` so leaving the Metronome tool doesn't leave a click running
     /// or hold the audio session away from other tools/apps.
     func shutdown() {
-        stopBeatRing()
         engine.shutdown()
         isPlaying = false
+        stopBeatClock()
         coordinator.deactivate()
     }
 
@@ -293,46 +293,64 @@ final class MetronomeViewModel {
         guard isPlaying else { return }
         engine.stop()
         pushConfig()
+        currentBeat = 0         // the restart begins at the downbeat
         engine.start()
-        // Restart the visual ring too so the dot snaps back to the downbeat in
-        // step with the audio (and so it honors a new `beatsPerBar`).
-        startBeatRing()
+        startBeatClock()        // re-anchor the ring/haptic clock to the restart
     }
 
-    // MARK: - Cosmetic beat-ring driver
+    // MARK: - Beat clock (drift-free visual + haptic)
     //
-    // IMPORTANT: this is PURELY VISUAL. The engine is the source of audio truth
-    // and stays drift-free; this loop just lights ring dots roughly in time. We
-    // sleep one beat-duration (60 / bpm seconds) between advances. Because
-    // `Task.sleep` is at the mercy of the scheduler (not the audio clock), the
-    // lit dot can drift a hair from the actual click over a long run — acceptable
-    // for a decorative highlight, and we restart it whenever the tempo changes so
-    // it never wanders far.
+    // We light the ring and buzz the haptic from a Task that wakes at ABSOLUTE
+    // per-beat targets (anchored to start), so it never accumulates drift the way
+    // an incremental `sleep(for:)` loop would — and it stays locked to the audio,
+    // which is anchored the same way. We also let it lead the audio by the small
+    // output latency, so the dot's glow finishes lighting right as the beat lands
+    // (rather than starting to animate only after you hear it).
 
-    /// Begin (or restart) the beat-ring animation from the downbeat.
-    private func startBeatRing() {
-        stopBeatRing()
+    /// Start (or restart) the beat clock from beat 0.
+    private func startBeatClock() {
+        stopBeatClock()
         currentBeat = 0
+        if hapticsEnabled, haptics == nil {
+            haptics = MetronomeHaptics()
+            haptics?.prepare()
+        }
+        // Tempo is fixed per run (any change restarts us), so capture the beat
+        // length once. Absolute targets off this anchor never drift.
+        let secondsPerBeat = 60.0 / bpm
+        // Update each beat slightly EARLY so the dot's ~0.12s glow finishes rising
+        // right as the beat lands, instead of only starting to animate then.
+        let glowLead = 0.08
         beatTask = Task { @MainActor [weak self] in
-            // Loop until the task is cancelled (stop/shutdown/restart) or the VM
-            // is gone. `[weak self]` so a lingering task can't keep the VM alive.
-            while !Task.isCancelled {
-                guard let self, self.isPlaying else { break }
-                // Sleep one beat at the CURRENT tempo. Reading `bpm` each
-                // iteration means a tempo change naturally lengthens/shortens
-                // the next gap even before a restart kicks in.
-                let secondsPerBeat = 60.0 / self.bpm
-                try? await Task.sleep(for: .seconds(secondsPerBeat))
-                if Task.isCancelled { break }
-                guard self.isPlaying else { break }
-                // Advance to the next dot, wrapping at the end of the bar.
-                self.currentBeat = (self.currentBeat + 1) % self.beatsPerBar
+            guard let self else { return }
+            let anchor = ContinuousClock.now
+            var beat = 0
+            while !Task.isCancelled, self.isPlaying {
+                let target = anchor.advanced(
+                    by: .seconds(Double(beat) * secondsPerBeat - glowLead))
+                try? await Task.sleep(until: target, clock: .continuous)
+                if Task.isCancelled || !self.isPlaying { break }
+
+                let indexInBar = beat % max(self.beatsPerBar, 1)
+                self.currentBeat = indexInBar
+
+                if self.hapticsEnabled {
+                    if self.haptics == nil {
+                        self.haptics = MetronomeHaptics()
+                        self.haptics?.prepare()
+                    }
+                    let accents = self.beatAccents
+                    let accented = accents.indices.contains(indexInBar)
+                        && accents[indexInBar] == .accent
+                    self.haptics?.beat(accented: accented)
+                }
+                beat += 1
             }
         }
     }
 
-    /// Cancel the beat-ring animation and reset the highlight to the downbeat.
-    private func stopBeatRing() {
+    /// Cancel the beat clock and reset the highlight to the downbeat.
+    private func stopBeatClock() {
         beatTask?.cancel()
         beatTask = nil
         currentBeat = 0

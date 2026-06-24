@@ -131,8 +131,8 @@ enum ClickRole {
 /// relationship.
 ///
 /// `CaseIterable` so the picker lists them automatically; `Sendable` as it's a
-/// plain value.
-enum MetronomeSoundSet: CaseIterable, Equatable, Hashable, Sendable {
+/// plain value. `String`-raw + `Codable` so Settings can persist the choice.
+enum MetronomeSoundSet: String, CaseIterable, Equatable, Hashable, Codable, Sendable {
     /// Clean synthesized sine "beeps" — the classic electronic metronome.
     case classic
     /// Lower, woodier blips with a faster decay — a softer, percussive feel.

@@ -43,6 +43,7 @@ struct SettingsView: View {
             feedbackSection
             appearanceSection
             instrumentSection
+            metronomeSection
             advancedSection
             aboutSection
         }
@@ -111,19 +112,14 @@ struct SettingsView: View {
 
     // MARK: - Appearance
 
-    /// Theme + accent. Accent is a single purple in v1, so its picker has one
-    /// option for now — present but ready to grow into a real picker later.
+    /// Theme only. The accent is GuitarKit's fixed purple signature — not a user
+    /// choice — so there's no accent control here. (The store still carries a
+    /// single-purple `accent` token for forward-compat, but it's never surfaced.)
     private var appearanceSection: some View {
         Section("Appearance") {
             Picker("Theme", selection: $store.theme) {
                 ForEach(AppTheme.allCases) { theme in
                     Text(theme.displayName).tag(theme)
-                }
-            }
-
-            Picker("Accent", selection: $store.accent) {
-                ForEach(AppAccent.allCases) { accent in
-                    Text(accent.displayName).tag(accent)
                 }
             }
         }
@@ -145,6 +141,26 @@ struct SettingsView: View {
                     Text(labeling.displayName).tag(labeling)
                 }
             }
+        }
+    }
+
+    // MARK: - Metronome
+
+    /// The metronome's click timbre + the per-beat haptic. These live here (rather
+    /// than on the metronome face) to keep that screen focused on tempo + meter.
+    private var metronomeSection: some View {
+        Section {
+            Picker("Click Sound", selection: $store.metronomeSoundSet) {
+                ForEach(MetronomeSoundSet.allCases, id: \.self) { set in
+                    Text(set.label).tag(set)
+                }
+            }
+
+            Toggle("Per-Beat Haptic", isOn: $store.metronomeHapticsEnabled)
+        } header: {
+            Text("Metronome")
+        } footer: {
+            Text("Turn on the per-beat haptic and mute the beats for silent practice — feel the pulse with no sound.")
         }
     }
 

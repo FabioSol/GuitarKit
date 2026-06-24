@@ -196,6 +196,8 @@ final class SettingsStore {
         static let accent              = "guitarkit.settings.accent"
         static let handedness          = "guitarkit.settings.handedness"
         static let defaultLabeling     = "guitarkit.settings.defaultLabeling"
+        static let metronomeSoundSet   = "guitarkit.settings.metronomeSoundSet"
+        static let metronomeHaptics    = "guitarkit.settings.metronomeHapticsEnabled"
         static let experimentalHeroViz = "guitarkit.settings.experimentalHeroVisualization"
         static let experimentalFingerNumbers = "guitarkit.settings.experimentalFingerNumberLabels"
         static let experimentalReactiveBackdrop = "guitarkit.settings.experimentalReactiveBackdrop"
@@ -218,6 +220,8 @@ final class SettingsStore {
         static let accent: AppAccent = .purple
         static let handedness: Handedness = .right
         static let defaultLabeling: NoteLabeling = .sharps
+        static let metronomeSoundSet: MetronomeSoundSet = .classic
+        static let metronomeHapticsEnabled = false
         static let experimentalHeroVisualization = false
         static let experimentalFingerNumberLabels = false
         static let experimentalReactiveBackdrop = false
@@ -306,6 +310,23 @@ final class SettingsStore {
     /// Default sharp/flat spelling for ambiguous notes.
     var defaultLabeling: NoteLabeling = Default.defaultLabeling {
         didSet { defaults.set(defaultLabeling.rawValue, forKey: Key.defaultLabeling) }
+    }
+
+    // MARK: Metronome settings
+    //
+    // The metronome's CLICK TIMBRE and PER-BEAT HAPTIC live here (in Settings)
+    // rather than on the metronome face, to keep that screen uncluttered. The
+    // Metronome tool reads these from the store.
+
+    /// The metronome's click sound set (Classic / Wood / Digital).
+    var metronomeSoundSet: MetronomeSoundSet = Default.metronomeSoundSet {
+        didSet { defaults.set(metronomeSoundSet.rawValue, forKey: Key.metronomeSoundSet) }
+    }
+
+    /// Whether the metronome buzzes a per-beat haptic — with the beats muted this
+    /// is "silent practice." Off by default.
+    var metronomeHapticsEnabled: Bool = Default.metronomeHapticsEnabled {
+        didSet { defaults.set(metronomeHapticsEnabled, forKey: Key.metronomeHaptics) }
     }
 
     // MARK: Advanced — experimental feature flags
@@ -399,6 +420,12 @@ final class SettingsStore {
         defaultLabeling = Self.loadEnum(
             from: defaults, key: Key.defaultLabeling, default: Default.defaultLabeling)
 
+        metronomeSoundSet = Self.loadEnum(
+            from: defaults, key: Key.metronomeSoundSet, default: Default.metronomeSoundSet)
+
+        metronomeHapticsEnabled = Self.loadBool(
+            from: defaults, key: Key.metronomeHaptics, default: Default.metronomeHapticsEnabled)
+
         experimentalHeroVisualization = Self.loadBool(
             from: defaults, key: Key.experimentalHeroViz,
             default: Default.experimentalHeroVisualization)
@@ -428,6 +455,8 @@ final class SettingsStore {
         accent = Default.accent
         handedness = Default.handedness
         defaultLabeling = Default.defaultLabeling
+        metronomeSoundSet = Default.metronomeSoundSet
+        metronomeHapticsEnabled = Default.metronomeHapticsEnabled
         experimentalHeroVisualization = Default.experimentalHeroVisualization
         experimentalFingerNumberLabels = Default.experimentalFingerNumberLabels
         experimentalReactiveBackdrop = Default.experimentalReactiveBackdrop
