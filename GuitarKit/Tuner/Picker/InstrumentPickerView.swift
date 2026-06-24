@@ -58,10 +58,16 @@ struct InstrumentPickerView: View {
     /// `recordSelection(...)`. After it fires we dismiss the sheet.
     let onSelect: (Instrument, Tuning) -> Void
 
-    /// Called when the player taps "＋ Create custom". The custom editor is a later
-    /// slice (#12), so this defaults to a no-op — the row is present (and looks
-    /// quiet/disabled) but does nothing until that slice wires a real action in.
+    /// Called when the player taps "＋ Create custom" — opens the custom editor.
     let onCreateCustom: () -> Void
+
+    /// Supplies the player's saved CUSTOM tunings for a given instrument (from the
+    /// CustomTuningStore). Defaults to "none" so callers that don't have custom
+    /// tunings keep working. Shown under a "Custom" sub-group with swipe-to-delete.
+    let customTunings: (Instrument) -> [Tuning]
+
+    /// Called to delete a custom tuning (swipe-to-delete). Default no-op.
+    let onDeleteCustom: (Instrument, Tuning) -> Void
 
     // MARK: Environment + local state
 
@@ -88,13 +94,17 @@ struct InstrumentPickerView: View {
         selectedTuning: Tuning,
         mostUsedInstrumentIDs: [String] = [],
         onSelect: @escaping (Instrument, Tuning) -> Void,
-        onCreateCustom: @escaping () -> Void = {}
+        onCreateCustom: @escaping () -> Void = {},
+        customTunings: @escaping (Instrument) -> [Tuning] = { _ in [] },
+        onDeleteCustom: @escaping (Instrument, Tuning) -> Void = { _, _ in }
     ) {
         self.selectedInstrument = selectedInstrument
         self.selectedTuning = selectedTuning
         self.mostUsedInstrumentIDs = mostUsedInstrumentIDs
         self.onSelect = onSelect
         self.onCreateCustom = onCreateCustom
+        self.customTunings = customTunings
+        self.onDeleteCustom = onDeleteCustom
         // Start with the active instrument's row expanded, all others collapsed.
         _expandedInstrumentIDs = State(initialValue: [selectedInstrument.id])
     }
@@ -250,10 +260,29 @@ struct InstrumentPickerView: View {
             }
         }
 
-        // The "＋ Create custom" row. The editor is slice #12; until then the row
-        // is intentionally QUIET (dimmed) to read as "coming/secondary", and tapping
-        // it just calls the `onCreateCustom` no-op. We don't `.disabled` it outright
-        // so it's still discoverable and VoiceOver-reachable.
+        // The player's saved CUSTOM tunings for this instrument, under their own
+        // sub-header, each swipe-to-deletable.
+        let customs = customTunings(instrument)
+        if !customs.isEmpty {
+            Text("Custom")
+                .font(GKFont.caption)
+                .foregroundStyle(GKColor.textSecondary)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(customs, id: \.name) { tuning in
+                tuningRow(instrument: instrument, tuning: tuning)
+                    // Swipe left to delete this custom tuning (story 32).
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            onDeleteCustom(instrument, tuning)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+            }
+        }
+
+        // The "＋ Create custom" row — opens the editor seeded from the current
+        // tuning. Quiet/secondary styling; discoverable + VoiceOver-reachable.
         Button {
             onCreateCustom()
         } label: {

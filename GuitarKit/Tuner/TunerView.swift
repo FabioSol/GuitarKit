@@ -53,9 +53,25 @@ struct TunerView: View {
     @State private var isChromaticMode = false
 
     /// The picker's persistent memory (last-used instrument/tuning + usage counts)
-    /// and whether the picker sheet is showing.
+    /// and the player's saved custom tunings.
     @State private var selection = InstrumentSelectionStore()
-    @State private var showingPicker = false
+    @State private var customTunings = CustomTuningStore()
+
+    /// Which sheet (if any) is up. A single enum (rather than two Bools) lets the
+    /// picker swap straight to the custom editor without two sheets fighting.
+    @State private var activeSheet: TunerSheet?
+
+    /// The sheets the Tuner face can present.
+    private enum TunerSheet: Identifiable {
+        case picker
+        case customEditor(strings: [Note])
+        var id: String {
+            switch self {
+            case .picker:       return "picker"
+            case .customEditor: return "editor"
+            }
+        }
+    }
 
     /// Whether the user has already seen the first-run priming screen. We read
     /// the persisted flag once into view state, then flip it when priming
@@ -144,7 +160,7 @@ struct TunerView: View {
                         InstrumentSelectorPill(
                             instrumentName: session.currentInstrument.name,
                             tuningName: session.currentTuning.name,
-                            action: { showingPicker = true }
+                            action: { activeSheet = .picker }
                         )
                         Spacer()
                     }
@@ -203,18 +219,39 @@ struct TunerView: View {
         .onChange(of: isChromaticMode) { _, on in
             if on, isToneMode { isToneMode = false }
         }
-        // The instrument/tuning picker.
-        .sheet(isPresented: $showingPicker) {
-            InstrumentPickerView(
-                selectedInstrument: session.currentInstrument,
-                selectedTuning: session.currentTuning,
-                mostUsedInstrumentIDs: selection.mostUsedInstrumentIDs(limit: 3),
-                onSelect: { instrument, tuning in
-                    session.select(instrument: instrument, tuning: tuning)
-                    selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
-                },
-                onCreateCustom: { /* custom tuning editor — slice #12 */ }
-            )
+        // The picker / custom-tuning editor (one sheet; the picker swaps to the
+        // editor in place when "Create custom" is tapped). On dismiss, restore the
+        // recording session in case the editor's tap-to-hear switched to playback.
+        .sheet(item: $activeSheet, onDismiss: { syncToneMode(false) }) { sheet in
+            switch sheet {
+            case .picker:
+                InstrumentPickerView(
+                    selectedInstrument: session.currentInstrument,
+                    selectedTuning: session.currentTuning,
+                    mostUsedInstrumentIDs: selection.mostUsedInstrumentIDs(limit: 3),
+                    onSelect: { instrument, tuning in
+                        session.select(instrument: instrument, tuning: tuning)
+                        selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
+                    },
+                    onCreateCustom: {
+                        // Open the editor seeded from the current tuning. Swapping
+                        // the sheet item replaces the picker content in place.
+                        activeSheet = .customEditor(strings: session.currentTuning.strings)
+                    },
+                    customTunings: { customTunings.tunings(forInstrumentID: $0.id) },
+                    onDeleteCustom: { instrument, tuning in
+                        customTunings.delete(named: tuning.name, forInstrumentID: instrument.id)
+                    }
+                )
+            case .customEditor(let strings):
+                CustomTuningEditorView(
+                    initialStrings: strings,
+                    instrument: session.currentInstrument,
+                    onHear: handleHearNote,
+                    detectedNote: { detector.reading?.note },
+                    onSave: handleSaveCustomTuning
+                )
+            }
         }
         .ignoresSafeArea()
     }
@@ -330,6 +367,23 @@ struct TunerView: View {
             toneGenerator.shutdown()
             syncEngine(to: permission.state)
         }
+    }
+
+    /// Editor tap-to-hear: switch to playback and sound the note. The sheet's
+    /// onDismiss restores the recording session afterwards.
+    private func handleHearNote(_ note: Note) {
+        try? coordinator.configureForPlayback()
+        let hz = settings?.referencePitchHz ?? ReferencePitch.standard.hertz
+        let calculator = PitchCalculator(referenceA: ReferencePitch(hertz: hz))
+        toneGenerator.play(frequencyHz: calculator.frequency(of: note))
+    }
+
+    /// Editor save: persist the custom tuning, then switch the tuner to it.
+    private func handleSaveCustomTuning(_ tuning: Tuning) {
+        let instrument = session.currentInstrument
+        customTunings.save(tuning, forInstrumentID: instrument.id)
+        session.select(instrument: instrument, tuning: tuning)
+        selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
     }
 
     /// Push the user's global preferences into the tuning session: A4 reference
