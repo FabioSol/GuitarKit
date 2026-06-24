@@ -97,14 +97,20 @@ struct RootView: View {
             // still show the shared placeholder until their slices land.
             TunerView()
         case .metronome:
-            ToolPlaceholderView(tool: .metronome)
+            // The Metronome tool (slice #15): a circular tempo dial driving the
+            // drift-free `MetronomeEngine` from slice #14. It owns its own
+            // `@State` view model so the tempo survives navigating away and back.
+            MetronomeView()
         case .circleOfFifths:
             // The real Circle-of-Fifths explorer (slice #18) replaces the
             // placeholder. It owns its own `@State` view model, so its selection
             // is preserved while the app runs even as we navigate away and back.
             CircleOfFifthsView()
         case .chords:
-            ToolPlaceholderView(tool: .chords)
+            // The Chords tool (slice #20): pick a root + quality and see a
+            // playable voicing for the active tuning, built on the same pure
+            // `Fretboard` engine the Scales tool uses.
+            ChordsView()
         case .scales:
             // The Scales tool (slice #19): tuning-aware fretboard + scale shapes.
             ScalesView()
