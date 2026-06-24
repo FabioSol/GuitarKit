@@ -77,16 +77,18 @@ private struct GKGlassModifier: ViewModifier {
             reduceTransparency || colorSchemeContrast == .increased
 
         if needsOpaqueFallback {
-            // OPAQUE FALLBACK: a solid, appearance-aware surface. No
-            // translucency, so contrast is guaranteed. We still keep the same
-            // shape and a hairline border so the element reads as a distinct
-            // control.
+            // OPAQUE FALLBACK: a solid, ELEVATED surface that's visibly distinct
+            // from the screen background (the old fallback used `GKColor.background`
+            // — the same color as the screen — so chrome nearly vanished under
+            // Increase Contrast / Reduce Transparency). `secondarySystemBackground`
+            // is the system's elevated-surface color and adapts to light/dark +
+            // high-contrast; we add a firmer border so the control's edge reads.
             content
                 .background(
-                    shape.fill(GKColor.background)
+                    shape.fill(Color(uiColor: .secondarySystemBackground))
                 )
                 .overlay(
-                    shape.stroke(GKColor.textSecondary.opacity(0.3), lineWidth: 1)
+                    shape.stroke(GKColor.textSecondary.opacity(0.5), lineWidth: 1)
                 )
         } else {
             // NORMAL PATH: real Liquid Glass.

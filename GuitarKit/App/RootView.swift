@@ -36,6 +36,10 @@ struct RootView: View {
     @State private var circleModel = CircleOfFifthsViewModel()
     @State private var chordsModel = ChordsViewModel()
     @State private var scalesModel = ScalesViewModel()
+    // The Metronome's model is hoisted here too so its tempo / time signature /
+    // accents survive navigating away and back (its view is rebuilt by the
+    // `switch` like the others). Audio still stops on leave via `onDisappear`.
+    @State private var metronomeModel = MetronomeViewModel()
 
     var body: some View {
         // `ZStack(alignment: .bottom)` layers the tool screen behind the nav,
@@ -107,10 +111,10 @@ struct RootView: View {
             // still show the shared placeholder until their slices land.
             TunerView()
         case .metronome:
-            // The Metronome tool (slice #15): a circular tempo dial driving the
-            // drift-free `MetronomeEngine` from slice #14. It owns its own
-            // `@State` view model so the tempo survives navigating away and back.
-            MetronomeView()
+            // The Metronome tool: a circular tempo dial driving the drift-free
+            // `MetronomeEngine`. Its model is owned by the shell (above) so the
+            // tempo/time-signature/accents survive navigating away and back.
+            MetronomeView(model: metronomeModel)
         case .circleOfFifths:
             // The Circle-of-Fifths explorer (slice #18), now a HUB (slice #21):
             // its details panel cross-links into Chords and Scales. The model is

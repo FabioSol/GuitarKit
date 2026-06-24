@@ -53,7 +53,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.confirmationSound, .chime)
 
         // Appearance
-        XCTAssertEqual(store.theme, .system)
+        XCTAssertEqual(store.theme, .dark)
         XCTAssertEqual(store.accent, .purple)
 
         // Instrument
@@ -151,7 +151,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.referencePitchHz, 440)
         XCTAssertTrue(store.hapticsEnabled)
         XCTAssertFalse(store.soundEnabled)
-        XCTAssertEqual(store.theme, .system)
+        XCTAssertEqual(store.theme, .dark)
         XCTAssertEqual(store.handedness, .right)
         XCTAssertEqual(store.defaultLabeling, .sharps)
         XCTAssertEqual(store.inTuneSensitivity, .standard)
@@ -163,11 +163,11 @@ final class SettingsStoreTests: XCTestCase {
     func test_reset_persists() {
         let first = SettingsStore(defaults: defaults)
         first.hapticsEnabled = false
-        first.theme = .dark
+        first.theme = .light          // a non-default, so reset → .dark is proven
         first.reset()
 
         let second = SettingsStore(defaults: defaults)
         XCTAssertTrue(second.hapticsEnabled)
-        XCTAssertEqual(second.theme, .system)
+        XCTAssertEqual(second.theme, .dark)
     }
 }

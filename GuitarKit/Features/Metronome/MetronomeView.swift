@@ -27,10 +27,11 @@ import SwiftUI
 
 struct MetronomeView: View {
 
-    /// The screen owns its view model. `@State` keeps the same instance alive
-    /// across re-renders (SwiftUI re-runs `body` constantly; the model must not
-    /// be recreated each time).
-    @State private var model = MetronomeViewModel()
+    /// The view model. INJECTED by `RootView` (which owns it via `@State`) so the
+    /// tempo / time signature / accents survive navigating away and back, like the
+    /// other tools. `@Bindable` for two-way bindings; audio still stops on leave
+    /// via `.onDisappear`.
+    @Bindable var model: MetronomeViewModel
 
     /// Global preferences, supplied by the app shell. The metronome's SOUND SET
     /// and PER-BEAT HAPTIC live in Settings (off the face), so we read them here
@@ -500,5 +501,5 @@ struct MetronomeView: View {
 }
 
 #Preview {
-    MetronomeView()
+    MetronomeView(model: MetronomeViewModel())
 }

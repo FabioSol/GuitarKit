@@ -216,7 +216,7 @@ final class SettingsStore {
         // PRD: the app is "silent by default" — sound starts OFF.
         static let soundEnabled = false
         static let confirmationSound: ConfirmationSound = .chime
-        static let theme: AppTheme = .system
+        static let theme: AppTheme = .dark   // dark-first: boot into dark by default
         static let accent: AppAccent = .purple
         static let handedness: Handedness = .right
         static let defaultLabeling: NoteLabeling = .sharps
