@@ -56,7 +56,7 @@ final class MetronomeViewModel {
             // Only react when the value actually changed, to avoid needless
             // engine restarts when something sets the same value.
             guard oldValue != bpm else { return }
-            applyBPMChangeWhilePlaying()
+            pushConfigAndRestartIfPlaying()
         }
     }
 
@@ -68,9 +68,55 @@ final class MetronomeViewModel {
     /// beat-ring highlight. Display-only — see the class header and `beatTask`.
     private(set) var currentBeat = 0
 
-    /// How many beats make up one bar (one full trip around the beat-ring).
-    /// Fixed at 4 for this slice (time signatures are a later feature).
-    let beatsPerBar = 4
+    /// The chosen time signature. Setting it RESIZES `beatAccents` and the
+    /// beat-ring (since `beatsPerBar` now comes from here, not a constant) and —
+    /// if playing — restarts the engine so the new bar is heard at once.
+    var timeSignature: TimeSignature = .fourFour {
+        didSet {
+            guard oldValue != timeSignature else { return }
+            resizeAccents(to: timeSignature.beatsPerBar)
+            pushConfigAndRestartIfPlaying()
+        }
+    }
+
+    /// How finely each beat is subdivided (quarter / eighth / triplet /
+    /// sixteenth). Changing it pushes to the engine and restarts if playing.
+    var subdivision: Subdivision = .quarter {
+        didSet {
+            guard oldValue != subdivision else { return }
+            pushConfigAndRestartIfPlaying()
+        }
+    }
+
+    /// The selected click timbre. Restarts the engine (which rebuilds its role
+    /// buffers) if playing.
+    var soundSet: MetronomeSoundSet = .classic {
+        didSet {
+            guard oldValue != soundSet else { return }
+            pushConfigAndRestartIfPlaying()
+        }
+    }
+
+    /// Whether the per-beat haptic fires. With everything muted, this is the
+    /// SILENT-PRACTICE mode: you feel and see the pulse with no audible click.
+    /// Default off. Restarts (cheap) so the engine warms its Taptic generator.
+    var hapticsEnabled = false {
+        didSet {
+            guard oldValue != hapticsEnabled else { return }
+            pushConfigAndRestartIfPlaying()
+        }
+    }
+
+    /// Per-beat emphasis, one entry per beat (index 0 = the downbeat). The view
+    /// reads this to draw each dot's state and calls `cycleAccent(at:)` to change
+    /// it. `private(set)` — only our methods mutate it, keeping it sized to the
+    /// time signature. Defaults to "accent the 1, normal the rest."
+    private(set) var beatAccents: [BeatAccent] = [.accent, .normal, .normal, .normal]
+
+    /// How many beats make up one bar (one full trip around the beat-ring). Now
+    /// DERIVED from the time signature rather than a constant, so changing the
+    /// signature redraws the ring and resizes the accents.
+    var beatsPerBar: Int { timeSignature.beatsPerBar }
 
     // MARK: - Collaborators (plumbing, not observed)
 
@@ -104,11 +150,23 @@ final class MetronomeViewModel {
         // ScalesViewModel playback pattern).
         try? coordinator.configureForPlayback()
 
-        engine.bpm = bpm        // the engine reads this on start()
-        engine.start()
+        pushConfig()            // copy bpm + all config into the engine
+        engine.start()          // the engine reads its config on start()
         isPlaying = true
 
         startBeatRing()
+    }
+
+    /// Copy the whole current configuration into the engine. The engine reads
+    /// these on `start()`, so we call this just before starting (and on any
+    /// config change while playing, followed by a restart).
+    private func pushConfig() {
+        engine.bpm = bpm
+        engine.beatsPerBar = beatsPerBar
+        engine.subdivision = subdivision
+        engine.accents = beatAccents
+        engine.soundSet = soundSet
+        engine.hapticsEnabled = hapticsEnabled
     }
 
     /// Stop the click and freeze the beat-ring.
@@ -160,24 +218,84 @@ final class MetronomeViewModel {
         coordinator.deactivate()
     }
 
-    // MARK: - BPM-change-while-playing
+    // MARK: - Config inputs (time signature / subdivision / accents / sound / haptics)
 
-    /// The engine only adopts a new `bpm` on `start()`. So if the tempo changes
-    /// while we're already playing, restart it (stop → start) so the change is
-    /// audible immediately rather than on the next manual start.
+    /// Choose a time signature (preset or custom). Goes through the observed
+    /// `timeSignature` setter, which resizes the accents + ring and restarts the
+    /// engine if playing.
+    func setTimeSignature(_ signature: TimeSignature) {
+        timeSignature = signature
+    }
+
+    /// Choose a custom bar by beat count, keeping a quarter-note value. The
+    /// `TimeSignature` initializer clamps the count to a sane range.
+    func setCustomBeats(_ beats: Int) {
+        timeSignature = TimeSignature(beatsPerBar: beats)
+    }
+
+    /// Choose a subdivision. Goes through the observed setter (push + restart).
+    func setSubdivision(_ value: Subdivision) {
+        subdivision = value
+    }
+
+    /// Choose a sound set. Goes through the observed setter (push + restart).
+    func setSoundSet(_ value: MetronomeSoundSet) {
+        soundSet = value
+    }
+
+    /// Turn the per-beat haptic on/off (silent practice when sounds are muted).
+    func setHapticsEnabled(_ enabled: Bool) {
+        hapticsEnabled = enabled
+    }
+
+    /// Tap a beat-ring dot: cycle its accent accent → normal → muted → accent.
+    /// Pure cycle lives in `BeatAccent.next`; we just apply it and re-push.
+    func cycleAccent(at beatIndex: Int) {
+        guard beatAccents.indices.contains(beatIndex) else { return }
+        beatAccents[beatIndex] = beatAccents[beatIndex].next
+        pushConfigAndRestartIfPlaying()
+    }
+
+    /// Resize `beatAccents` to `count` beats when the time signature changes,
+    /// PRESERVING existing per-beat choices where possible. Shrinking keeps the
+    /// first `count` choices; growing keeps what's there and pads the new beats
+    /// with `.normal`. (The initial array already accents beat 0, and we never
+    /// shrink to empty for a valid signature, so the downbeat accent is retained
+    /// across resizes.)
+    private func resizeAccents(to count: Int) {
+        guard count > 0 else { beatAccents = []; return }
+        if count <= beatAccents.count {
+            // Shrinking (or same): keep the first `count` choices.
+            beatAccents = Array(beatAccents.prefix(count))
+        } else {
+            // Growing: keep what we have, pad the new beats with `.normal`.
+            let added = Array(repeating: BeatAccent.normal, count: count - beatAccents.count)
+            beatAccents = beatAccents + added
+        }
+    }
+
+    // MARK: - Push-and-restart on any config change while playing
+
+    /// The engine adopts configuration only on `start()`. So if ANYTHING the
+    /// engine cares about (tempo, time signature, subdivision, accents, sound
+    /// set, haptics) changes while we're already playing, push the new config and
+    /// restart it (stop → start) so the change is audible immediately. (When not
+    /// playing there's nothing to restart — the config will be read on the next
+    /// manual start.)
     ///
     /// ROUGH EDGE the orchestrator should weigh: restarting snaps the click back
-    /// to beat 0 (an immediate downbeat). During a fast drag that means the click
-    /// re-triggers on every BPM step, which can sound stuttery. It's the simplest
-    /// correct behavior given the engine's "applies on next start" contract; a
-    /// future refinement could debounce or teach the engine to retune live.
-    private func applyBPMChangeWhilePlaying() {
+    /// to beat 0 (an immediate downbeat). During a fast tempo drag — or rapidly
+    /// tapping several dots — the click re-triggers on each step, which can sound
+    /// stuttery. It's the simplest correct behavior given the engine's "applies
+    /// on next start" contract; a future refinement could debounce or teach the
+    /// engine to reconfigure live.
+    private func pushConfigAndRestartIfPlaying() {
         guard isPlaying else { return }
         engine.stop()
-        engine.bpm = bpm
+        pushConfig()
         engine.start()
         // Restart the visual ring too so the dot snaps back to the downbeat in
-        // step with the audio.
+        // step with the audio (and so it honors a new `beatsPerBar`).
         startBeatRing()
     }
 

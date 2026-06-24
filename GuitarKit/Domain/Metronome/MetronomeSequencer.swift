@@ -162,4 +162,100 @@ enum MetronomeSequencer {
             sampleOffset(ofBeat: beat, bpm: bpm, sampleRate: sampleRate)
         }
     }
+
+    // MARK: - Subdivision ("tick") spacing — drift-free at the sub-beat level
+    //
+    // A SUBDIVISION chops each beat into smaller, evenly-spaced pulses we call
+    // "ticks." With `ticksPerBeat` ticks per beat (quarter = 1, eighth = 2,
+    // triplet = 3, sixteenth = 4), tick 0 is beat 0, and every `ticksPerBeat`-th
+    // tick lands exactly on a beat. The math below mirrors the beat math one
+    // level finer — and stays drift-free for the SAME reason: every tick's
+    // position is computed independently from tick 0, never by adding to the
+    // previous tick, so rounding error can't accumulate.
+
+    /// How many output samples make up ONE tick at a given tempo and
+    /// subdivision. A tick is a fraction of a beat:
+    ///
+    ///     samplesPerTick = samplesPerBeat / ticksPerBeat
+    ///
+    /// We keep this fractional (a `Double`) for exactly the same reason as
+    /// `samplesPerBeat`: rounding here would throw away the precision that makes
+    /// `tickOffset(ofTick:...)` drift-free.
+    ///
+    /// - Parameters:
+    ///   - bpm: tempo in beats per minute. Must be > 0.
+    ///   - sampleRate: output samples per second. Must be > 0.
+    ///   - ticksPerBeat: how many ticks divide one beat (≥ 1). Values < 1 are
+    ///     treated as 1 (a tick == a beat) so we never divide by zero.
+    /// - Returns: the exact (possibly fractional) samples per tick, or `0` for
+    ///   invalid tempo/sample-rate.
+    static func samplesPerTick(bpm: Double, sampleRate: Double, ticksPerBeat: Int) -> Double {
+        let perBeat = samplesPerBeat(bpm: bpm, sampleRate: sampleRate)
+        // `samplesPerBeat` already returns 0 for bad inputs; pass that through.
+        guard perBeat > 0 else { return 0 }
+        // Guard the divisor: a non-positive tick count collapses to "1 tick per
+        // beat" (i.e. ticks == beats) rather than dividing by zero.
+        let divisor = max(ticksPerBeat, 1)
+        return perBeat / Double(divisor)
+    }
+
+    /// The absolute sample offset of tick number `tick`, measured from tick 0.
+    ///
+    /// This is the sub-beat sibling of `sampleOffset(ofBeat:...)`, and it stays
+    /// drift-free the same way — multiply the EXACT fractional tick spacing by
+    /// the tick index and round ONCE:
+    ///
+    ///     offset(tick n) = round(n · samplesPerTick)
+    ///
+    /// Because every `ticksPerBeat`-th tick reuses the same exact spacing, ticks
+    /// that fall on a beat line up with the beat math, and the clicks between
+    /// beats are perfectly even. Tick 0 is always sample 0.
+    ///
+    /// - Parameters:
+    ///   - tick: which tick (0 = the first/downbeat). Negatives clamp to 0.
+    ///   - bpm: tempo in beats per minute. Must be > 0.
+    ///   - sampleRate: output samples per second. Must be > 0.
+    ///   - ticksPerBeat: how many ticks divide one beat (≥ 1).
+    /// - Returns: the integer sample offset (from tick 0) of this tick; `0` for
+    ///   invalid tempo/sample-rate or a non-positive tick index.
+    static func tickOffset(ofTick tick: Int, bpm: Double, sampleRate: Double, ticksPerBeat: Int) -> Int {
+        // No tick before the first one.
+        guard tick > 0 else { return 0 }
+
+        let spacing = samplesPerTick(bpm: bpm, sampleRate: sampleRate, ticksPerBeat: ticksPerBeat)
+        guard spacing > 0 else { return 0 }
+
+        // Same one-line drift-free trick as the beat version, one level finer.
+        return Int((Double(tick) * spacing).rounded())
+    }
+
+    /// Produce the sample offsets of the next `count` TICKS, starting at
+    /// `firstTick`. The tick-level analogue of `offsets(fromBeat:count:...)`,
+    /// used by the engine to pre-schedule a rolling window of sub-beat clicks.
+    ///
+    /// Every entry is computed via `tickOffset(ofTick:...)`, so the whole batch
+    /// inherits the drift-free property — anchored to tick 0, never to the
+    /// previous tick.
+    ///
+    /// - Parameters:
+    ///   - firstTick: index of the first tick to include (0-based).
+    ///   - count: how many consecutive ticks to emit. `<= 0` → empty array.
+    ///   - bpm: tempo in beats per minute. Must be > 0.
+    ///   - sampleRate: output samples per second. Must be > 0.
+    ///   - ticksPerBeat: how many ticks divide one beat (≥ 1).
+    /// - Returns: `count` ascending integer sample offsets (one per tick), or
+    ///   an empty array for non-positive `count` / invalid tempo.
+    static func tickOffsets(
+        fromTick firstTick: Int,
+        count: Int,
+        bpm: Double,
+        sampleRate: Double,
+        ticksPerBeat: Int
+    ) -> [Int] {
+        guard count > 0 else { return [] }
+        let start = max(firstTick, 0)
+        return (start..<(start + count)).map { tick in
+            tickOffset(ofTick: tick, bpm: bpm, sampleRate: sampleRate, ticksPerBeat: ticksPerBeat)
+        }
+    }
 }

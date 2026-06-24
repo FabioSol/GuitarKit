@@ -55,20 +55,24 @@ struct MetronomeView: View {
         ZStack {
             GKColor.background.ignoresSafeArea()
 
-            VStack(spacing: 28) {
-                Text("Metronome")
-                    .font(GKFont.largeTitle)
-                    .foregroundStyle(GKColor.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // A scroll view so the dial PLUS the new configuration controls fit
+            // on smaller iPhones in portrait without clipping.
+            ScrollView {
+                VStack(spacing: 24) {
+                    Text("Metronome")
+                        .font(GKFont.largeTitle)
+                        .foregroundStyle(GKColor.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer()
-                dial
-                Spacer()
-                transportButton
-                tapAndSteppers
-                Spacer()
+                    dial
+                    transportButton
+                    tapAndSteppers
+
+                    // The musical configuration added in slice #16.
+                    configControls
+                }
+                .padding()
             }
-            .padding()
         }
         // Release the audio session and stop the click when leaving the tool.
         .onDisappear { model.shutdown() }
@@ -124,42 +128,76 @@ struct MetronomeView: View {
         }
     }
 
-    /// The ring of beat dots. Each dot sits at its angle around the dial; the
-    /// downbeat is accent-colored, the active beat glows, the rest are faint.
+    /// The ring of beat dots — now redrawn to the time signature's beat count and
+    /// TAPPABLE. Each dot shows its accent state (accent = filled + larger,
+    /// normal = outline, muted = hollow with an ×). Tapping a dot cycles it
+    /// accent → normal → muted. The currently-playing beat also glows.
+    ///
+    /// NOTE: the ring sits ON TOP of the dial's drag gesture, so we attach a tap
+    /// gesture to each dot. To keep the dots easy to hit (and not fight the
+    /// drag), each dot has a larger transparent hit area via `contentShape`.
     private var beatRing: some View {
         // The radius at which dots sit: just inside the stroked ring.
         let radius = dialSize / 2 - 6
 
         return ZStack {
             ForEach(0..<model.beatsPerBar, id: \.self) { beat in
-                let isDownbeat = beat == 0
+                let accent = model.beatAccents.indices.contains(beat)
+                    ? model.beatAccents[beat] : .normal
                 let isActive = beat == model.currentBeat && model.isPlaying
 
-                Circle()
-                    .fill(dotColor(isDownbeat: isDownbeat, isActive: isActive))
-                    .frame(width: isDownbeat ? 16 : 12,
-                           height: isDownbeat ? 16 : 12)
-                    // Place the dot using trig. We start at the TOP (12 o'clock,
-                    // −90°) and go clockwise, so beat 0 sits at the top where a
-                    // downbeat naturally "reads." `offset` shifts from center.
+                beatDot(accent: accent, isActive: isActive)
+                    // Place the dot using trig (top = 12 o'clock, clockwise).
                     .offset(dotOffset(beat: beat, radius: radius))
                     // A subtle pop when a beat lights up.
                     .animation(.easeOut(duration: 0.12), value: model.currentBeat)
+                    // Tap to cycle this beat's accent state.
+                    .onTapGesture { model.cycleAccent(at: beat) }
+                    .accessibilityLabel("Beat \(beat + 1)")
+                    .accessibilityValue(accent.displayHint)
+                    .accessibilityHint("Tap to change emphasis")
             }
         }
     }
 
-    /// The color of a beat dot given its role and whether it's currently playing.
-    private func dotColor(isDownbeat: Bool, isActive: Bool) -> Color {
-        if isActive {
-            // The lit beat: full brightness. Downbeat stays accent; others go
-            // to the friendly "in tune" green so the moving light is obvious.
-            return isDownbeat ? GKColor.accent : GKColor.inTune
+    /// One beat-ring dot, drawn to clearly distinguish its accent state:
+    ///   • accent → a larger, filled accent-colored disc
+    ///   • normal → a medium hollow ring (outline only)
+    ///   • muted  → a dim hollow ring with a small × through it
+    /// When that beat is the one currently sounding, it brightens.
+    @ViewBuilder
+    private func beatDot(accent: BeatAccent, isActive: Bool) -> some View {
+        // A generous transparent hit target so the dots are easy to tap without
+        // requiring pixel precision over the small visible shape.
+        let hitSize: CGFloat = 30
+
+        ZStack {
+            switch accent {
+            case .accent:
+                Circle()
+                    .fill(isActive ? GKColor.accent : GKColor.accent.opacity(0.85))
+                    .frame(width: 18, height: 18)
+            case .normal:
+                Circle()
+                    .stroke(isActive ? GKColor.inTune : GKColor.textSecondary.opacity(0.7),
+                            lineWidth: 2.5)
+                    .frame(width: 13, height: 13)
+            case .muted:
+                // A dim hollow ring with an × — clearly "this one is silent."
+                ZStack {
+                    Circle()
+                        .stroke(GKColor.textSecondary.opacity(0.35), lineWidth: 1.5)
+                        .frame(width: 13, height: 13)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(GKColor.textSecondary.opacity(0.45))
+                }
+            }
         }
-        // Idle dots: the downbeat keeps a dim accent so you can always see where
-        // "1" is; the rest are faint secondary dots.
-        return isDownbeat ? GKColor.accent.opacity(0.7)
-                          : GKColor.textSecondary.opacity(0.4)
+        // Expand the tappable area to `hitSize` while keeping the drawn shape
+        // small. `contentShape` makes the whole (transparent) frame hit-testable.
+        .frame(width: hitSize, height: hitSize)
+        .contentShape(Circle())
     }
 
     /// The (x, y) offset of beat `beat`'s dot from the dial center, placing dots
@@ -295,6 +333,149 @@ struct MetronomeView: View {
                 .background(Circle().fill(GKColor.textSecondary.opacity(0.15)))
         }
         .accessibilityLabel(label)
+    }
+
+    // MARK: - Configuration controls (slice #16)
+    //
+    // The musical setup below the transport: time signature (presets + a custom
+    // beat-count stepper), subdivision, sound set, and the silent-practice
+    // haptic toggle. Each is a labeled row so the screen reads top-to-bottom.
+
+    /// All the configuration rows, stacked.
+    private var configControls: some View {
+        VStack(spacing: 18) {
+            timeSignatureRow
+            subdivisionRow
+            soundSetRow
+            hapticsRow
+        }
+        .padding(.top, 8)
+    }
+
+    /// Time-signature presets as a menu, plus a ± stepper for a CUSTOM beat
+    /// count. We show the current signature's label so it's always clear.
+    private var timeSignatureRow: some View {
+        configRow(title: "Time signature") {
+            HStack(spacing: 12) {
+                // Preset picker as a pull-down menu.
+                Menu {
+                    ForEach(TimeSignature.presets, id: \.self) { sig in
+                        Button(sig.label) { model.setTimeSignature(sig) }
+                    }
+                } label: {
+                    pillLabel(model.timeSignature.label)
+                }
+                .accessibilityLabel("Time signature presets")
+
+                // Custom beat-count stepper: change just the number of beats.
+                HStack(spacing: 0) {
+                    stepperButton(symbol: "minus", label: "Fewer beats") {
+                        model.setCustomBeats(model.beatsPerBar - 1)
+                    }
+                    Text("\(model.beatsPerBar) beats")
+                        .font(GKFont.body)
+                        .foregroundStyle(GKColor.textSecondary)
+                        .frame(minWidth: 64)
+                    stepperButton(symbol: "plus", label: "More beats") {
+                        model.setCustomBeats(model.beatsPerBar + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Subdivision picker (quarter / eighth / triplet / sixteenth) as a segmented
+    /// row of selectable pills.
+    private var subdivisionRow: some View {
+        configRow(title: "Subdivision") {
+            HStack(spacing: 8) {
+                ForEach(Subdivision.allCases, id: \.self) { sub in
+                    selectablePill(sub.label, isSelected: model.subdivision == sub) {
+                        model.setSubdivision(sub)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sound-set picker (Classic / Wood / Digital) as selectable pills.
+    private var soundSetRow: some View {
+        configRow(title: "Sound") {
+            HStack(spacing: 8) {
+                ForEach(MetronomeSoundSet.allCases, id: \.self) { set in
+                    selectablePill(set.label, isSelected: model.soundSet == set) {
+                        model.setSoundSet(set)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The per-beat haptic toggle — the "silent practice" switch. Bound through
+    /// the model's setter so flipping it pushes config (and restarts if playing).
+    private var hapticsRow: some View {
+        configRow(title: "Per-beat haptic") {
+            Toggle("", isOn: Binding(
+                get: { model.hapticsEnabled },
+                set: { model.setHapticsEnabled($0) }
+            ))
+            .labelsHidden()
+            .tint(GKColor.accent)
+            .accessibilityLabel("Per-beat haptic")
+            .accessibilityHint("Feel each beat; mute all beats for silent practice")
+        }
+    }
+
+    // MARK: - Small reusable control bits
+
+    /// A labeled configuration row: a title on the left, the control on the
+    /// right. Keeps every row visually consistent.
+    private func configRow<Content: View>(title: String,
+                                          @ViewBuilder content: () -> Content) -> some View {
+        HStack {
+            Text(title)
+                .font(GKFont.body)
+                .foregroundStyle(GKColor.textPrimary)
+            Spacer()
+            content()
+        }
+    }
+
+    /// A static "pill" label (used for the time-signature menu trigger).
+    private func pillLabel(_ text: String) -> some View {
+        Text(text)
+            .font(GKFont.body.weight(.semibold))
+            .foregroundStyle(GKColor.accent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(GKColor.accent, lineWidth: 2)
+            )
+    }
+
+    /// A tappable pill that shows selected/unselected state — selected fills with
+    /// the accent, unselected is a faint outline. Used by the subdivision and
+    /// sound-set rows.
+    private func selectablePill(_ text: String, isSelected: Bool,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text)
+                .font(GKFont.caption.weight(.medium))
+                .foregroundStyle(isSelected ? .white : GKColor.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(isSelected ? GKColor.accent : Color.clear)
+                )
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .stroke(GKColor.textSecondary.opacity(isSelected ? 0 : 0.4),
+                                lineWidth: 1)
+                )
+        }
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 
