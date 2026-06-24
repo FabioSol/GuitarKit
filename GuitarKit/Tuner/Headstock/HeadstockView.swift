@@ -82,34 +82,49 @@ struct HeadstockView: View {
 
     // MARK: - The silhouette (asset-swappable layer)
 
-    /// The head art. If the spec names an asset (a designer's imported SVG) we
-    /// render that; otherwise we draw the built-in procedural shape. Pegs overlay
-    /// on top either way.
+    /// The head art. If the spec names an asset (a designer's imported SVG) we use
+    /// its SILHOUETTE; otherwise we draw the built-in procedural shape. Pegs
+    /// overlay on top either way.
     @ViewBuilder
     private var headstockBody: some View {
         if let art = spec.artAsset {
-            Image(art)
-                .resizable()
-                .scaledToFit()
+            // Paint the per-instrument silhouette with an ADAPTIVE gradient (masked
+            // by the SVG's shape) rather than rendering the SVG's own fill. The art
+            // bakes in dark gray stop-colors ("on the app's dark-first background"),
+            // so in LIGHT mode it stayed dark — making the dark peg note labels
+            // drawn on top hard to read. Masking an adaptive gradient keeps each
+            // instrument's unique outline while tracking the color scheme exactly
+            // like the procedural fallback does.
+            panelGradient
+                .mask(
+                    Image(art)
+                        .resizable()
+                        .scaledToFit()
+                )
         } else {
             HeadstockShape()
-                // A subtle vertical gradient of two near-background shades reads as
-                // a faintly raised solid panel (still opaque — not glass).
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            GKColor.textPrimary.opacity(0.10),
-                            GKColor.textPrimary.opacity(0.03)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+                .fill(panelGradient)
                 .background(HeadstockShape().fill(GKColor.background))
                 .overlay(
                     HeadstockShape().stroke(GKColor.textSecondary.opacity(0.45), lineWidth: 1.5)
                 )
         }
+    }
+
+    /// The faintly-raised "panel" sheen for the head, as two adaptive shades of the
+    /// primary label color (light over light, light-on-dark over dark). The 0.20→
+    /// 0.10 range approximates the original SVG's hand-picked dark gradient in dark
+    /// mode while inverting cleanly to a soft gray panel in light mode. Shared by
+    /// both the SVG-silhouette and procedural paths so they read identically.
+    private var panelGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                GKColor.textPrimary.opacity(0.20),
+                GKColor.textPrimary.opacity(0.10)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
     // MARK: - Strings
