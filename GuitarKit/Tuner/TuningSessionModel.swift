@@ -201,6 +201,15 @@ final class TuningSessionModel {
         rebuildSession()
     }
 
+    /// Lower the capo by one fret (clamped at 0 by `Capo`), the symmetric partner
+    /// to `incrementCapo()`. The VoiceOver "decrement" swipe routes here so an
+    /// adjustable capo steps ±1 in both directions, instead of a downward swipe
+    /// jumping straight to "no capo".
+    func decrementCapo() {
+        capo = Capo(fret: capo.fret - 1)
+        rebuildSession()
+    }
+
     /// Clear the capo back to none.
     func resetCapo() {
         capo = .none

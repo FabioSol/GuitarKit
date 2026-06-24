@@ -216,33 +216,44 @@ enum MPM {
         // crossing — the start of the first real hump.
         while i < maxLag, nsdf[i] <= 0 { i += 1 }
 
-        // STEP C: walk the rest, tracking the tallest sample in the current hump.
-        // `currentMax == 0` means "not currently inside a hump".
+        // STEP C: walk to the END of the buffer (inclusive of the final lag),
+        // tracking the tallest sample inside the current positive hump. Each hump
+        // is bounded by zero crossings, so its single highest SAMPLE *is* its peak
+        // — no separate "local maximum" test is needed, and using the running
+        // argmax means a peak sitting on the very last lag is captured too.
+        //
+        // WHY THIS MATTERS (the boundary bug): the old loop ran `while i < maxLag`
+        // and only recorded interior local maxima (`nsdf[i] > nsdf[i-1] && …`). For
+        // the lowest notes — whose period approaches the buffer length — the true
+        // hump can crest at or right against `maxLag`, where the local-max test
+        // never fires and the loop never visits it, so that final hump (the actual
+        // fundamental) was silently dropped. Tracking the argmax across all lags up
+        // to and including `maxLag` fixes that without changing normal-note results
+        // (an interior hump's argmax equals its local max).
+        //
+        // `currentMaxIndex == 0` is the "not currently inside a hump" sentinel; the
+        // first hump starts at i >= 1 (lag 0's lobe was skipped above), so index 0
+        // is never a real candidate.
         var currentMaxIndex = 0
-        while i < maxLag {
-            // Local maximum test: higher than the sample before and not lower
-            // than the one after (the `>=` tolerates flat tops).
-            if nsdf[i] > nsdf[i - 1], nsdf[i] >= nsdf[i + 1] {
+        while i <= maxLag {
+            if nsdf[i] > 0 {
+                // Inside a hump: keep the tallest sample seen so far.
                 if currentMaxIndex == 0 || nsdf[i] > nsdf[currentMaxIndex] {
                     currentMaxIndex = i
                 }
-            }
-
-            i += 1
-
-            // Did we just fall off the end of the hump (curve went non-positive)?
-            if i < nsdf.count, nsdf[i] <= 0 {
-                // Record this hump's peak (refined by parabola), but only if it's
-                // at or beyond minLag (ignore peaks that imply too-high a pitch).
+            } else if currentMaxIndex != 0 {
+                // Curve went non-positive → the hump just closed. Record its peak
+                // (parabola-refined), but only at/beyond minLag (ignore peaks that
+                // imply too-high a pitch), then reset to await the next hump.
                 if currentMaxIndex >= minLag {
                     peaks.append(parabolicPeak(nsdf, around: currentMaxIndex))
                 }
                 currentMaxIndex = 0
-                // Skip the negative trough to the next hump.
-                while i < maxLag, nsdf[i] <= 0 { i += 1 }
             }
+            i += 1
         }
-        // Flush a hump still open at the buffer's end.
+        // Flush a hump still open at the buffer's end (the case the old code missed
+        // when the crest landed on the final lag).
         if currentMaxIndex >= minLag {
             peaks.append(parabolicPeak(nsdf, around: currentMaxIndex))
         }

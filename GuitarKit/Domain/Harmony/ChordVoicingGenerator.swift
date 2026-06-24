@@ -168,10 +168,21 @@ public enum ChordVoicingGenerator {
         // Decide the lowest fret we're allowed to consider on this string.
         let start = allowOpen ? from : max(from, 1)
 
+        // EMPTY-WINDOW GUARD: if the window has collapsed (its end fell below its
+        // start — e.g. a `minimumFret` that runs off a short board), there is no
+        // fret to consider, so mute this string. Without this the old
+        // `start...max(start, to)` quietly scanned `start` itself even when it sat
+        // ABOVE the window end, leaning on the `fret <= fretCount` filter to catch
+        // it — fragile, and it scanned a fret outside the one-hand span. Making the
+        // empty range explicit is clearer and can't scan past the window.
+        guard start <= to else { return nil }
+
         // Scan upward and return the first (= lowest) chord-tone fret we hit.
         // Ascending order matters: "lowest in window" gives the most compact,
         // easiest-to-finger shape, and keeps the bass note as low as possible.
-        for fret in start...max(start, to) where fret <= fretboard.fretCount {
+        // `to` is already clamped to the board (`windowEnd = min(fretCount, …)`),
+        // so every fret in `start...to` is on the neck.
+        for fret in start...to {
             guard let note = fretboard.note(string: string, fret: fret) else { continue }
             if tones.contains(note.pitchClass) {
                 return fret

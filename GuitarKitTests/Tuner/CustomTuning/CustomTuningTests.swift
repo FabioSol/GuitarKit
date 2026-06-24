@@ -103,4 +103,40 @@ final class CustomTuningTests: XCTestCase {
         store.save(dadgad, forInstrumentID: "guitar-6")
         XCTAssertTrue(store.tunings(forInstrumentID: "bass-4").isEmpty)
     }
+
+    // MARK: - Corrupt-data resilience (audit P2)
+
+    /// Undecodable data under the key must not crash, and must NOT be silently
+    /// destroyed: the store starts empty but preserves the original blob under the
+    /// backup key so a future migration can recover it.
+    func test_store_corruptData_isPreservedNotWiped() {
+        let suite = "guitarkit.tests.customtuning.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+
+        // Garbage that is NOT valid JSON for our DTO map.
+        let garbage = Data("not a custom-tuning blob".utf8)
+        defaults.set(garbage, forKey: "guitarkit.customTunings.v1")
+
+        let store = CustomTuningStore(defaults: defaults)
+        // Resilient: empty library rather than a crash.
+        XCTAssertTrue(store.tunings(forInstrumentID: "guitar-6").isEmpty)
+        // Preserved: the unreadable blob was backed up, not thrown away.
+        XCTAssertEqual(defaults.data(forKey: "guitarkit.customTunings.v1.corrupt-backup"), garbage)
+
+        // And a subsequent save (which overwrites the main key) leaves the backup
+        // intact, so the original data is still recoverable.
+        store.save(dadgad, forInstrumentID: "guitar-6")
+        XCTAssertEqual(defaults.data(forKey: "guitarkit.customTunings.v1.corrupt-backup"), garbage)
+    }
+
+    /// A FRESH install (no data at all) must NOT create a spurious backup.
+    func test_store_freshInstall_noBackup() {
+        let suite = "guitarkit.tests.customtuning.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+
+        _ = CustomTuningStore(defaults: defaults)
+        XCTAssertNil(defaults.data(forKey: "guitarkit.customTunings.v1.corrupt-backup"))
+    }
 }

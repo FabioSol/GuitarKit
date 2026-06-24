@@ -73,6 +73,23 @@ final class MPMTests: XCTestCase {
         )
     }
 
+    // MARK: - Boundary: a hump cresting on the final lag (audit P2)
+
+    func test_lowNote_whosePeriodReachesBufferEnd_isStillDetected() {
+        // A 50 Hz tone has a period of exactly 882 samples at 44.1 kHz. Setting the
+        // search FLOOR to 50 Hz puts `maxLag` right ON that period, so the NSDF's
+        // fundamental hump crests at the very LAST lag. The old `keyMaxima` walk
+        // ran `while i < maxLag` and required an INTERIOR local maximum, so on this
+        // monotonically-rising final hump it recorded nothing and `detectPitch`
+        // returned nil. The boundary-inclusive argmax walk captures the crest.
+        let s = Signal.sine(frequency: 50, sampleRate: sampleRate, count: 4_096)
+        let estimate = MPM.detectPitch(
+            samples: s, sampleRate: sampleRate,
+            minFrequency: 50, maxFrequency: 1500
+        )
+        assertFrequency(estimate, near: 50, withinCents: 10)
+    }
+
     // MARK: - Octave-error resistance
 
     func test_octaveAmbiguous_reportsFundamental_notHarmonic() {

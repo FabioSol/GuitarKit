@@ -48,6 +48,12 @@ struct TunerView: View {
     /// (mic off, session → playback) and tapping a peg plays instead of locks.
     @State private var isToneMode = false
 
+    /// The peg index we last asked the tone generator to play, so we can highlight
+    /// EXACTLY that peg in tone-mode even when two strings share a target frequency
+    /// (where matching by frequency would highlight the wrong one). Read via
+    /// `playingStringIndex`, which also gates on the generator still sounding.
+    @State private var tonePegIndex: Int?
+
     /// Whether the hero is flipped to chromatic mode (names the nearest note for
     /// any pitch, no string targets). Mic stays on; the session isn't fed.
     @State private var isChromaticMode = false
@@ -199,6 +205,7 @@ struct TunerView: View {
                         CapoControlView(
                             capo: session.capo,
                             onIncrement: session.incrementCapo,
+                            onDecrement: session.decrementCapo,
                             onReset: session.resetCapo
                         )
                         toneModeToggle
@@ -376,17 +383,26 @@ struct TunerView: View {
     private func handlePegTap(_ index: Int) {
         guard session.targets.indices.contains(index) else { return }
         if isToneMode {
+            tonePegIndex = index
             toneGenerator.play(frequencyHz: session.targets[index].frequencyHz)
         } else {
             session.lock(toStringIndex: index)
         }
     }
 
-    /// Which peg is currently sounding — the target whose frequency matches the
-    /// tone generator's. Drives the headstock highlight in tone-mode.
+    /// Which peg is currently sounding, for the tone-mode headstock highlight.
+    ///
+    /// We remember the EXACT peg index we asked the generator to play (`tonePegIndex`)
+    /// rather than reverse-matching the generator's frequency back to a target.
+    /// Frequency-matching highlighted the wrong peg whenever two strings share a
+    /// target pitch (some alternate/custom tunings, or capo collisions) — `firstIndex`
+    /// would always pick the first of the duplicates. The remembered index is the
+    /// unambiguous source of truth; we still gate on the generator actually playing
+    /// so the highlight clears when the tone ends.
     private var playingStringIndex: Int? {
-        guard let hz = toneGenerator.currentFrequencyHz else { return nil }
-        return session.targets.firstIndex { abs($0.frequencyHz - hz) < 0.01 }
+        guard toneGenerator.currentFrequencyHz != nil else { return nil }
+        guard let index = tonePegIndex, session.targets.indices.contains(index) else { return nil }
+        return index
     }
 
     /// Flip the audio path when tone-mode toggles. Entering: stop the mic +

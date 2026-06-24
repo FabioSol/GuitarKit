@@ -130,6 +130,41 @@ final class ChordVoicingTests: XCTestCase {
         }
     }
 
+    // MARK: - 3b. Short-board window safety (audit P2 off-by-one)
+
+    func testVoicingOnShortBoardStaysOnBoardAndInWindow() {
+        // A deliberately SHORT neck so the search window collides with the board
+        // end. The old `start...max(start, to)` could scan a fret ABOVE the window
+        // (leaning on a later filter); the empty-window guard now returns cleanly.
+        let board = Fretboard(tuning: InstrumentLibrary.guitar6.tunings[0], fretCount: 3)
+        let chord = Chord(root: .c, quality: .major)
+
+        for minFret in 0...8 {
+            let voicing = ChordVoicingGenerator.voicing(for: chord, on: board, minimumFret: minFret)
+
+            // Every sounded fret stays on the 3-fret neck.
+            for fret in voicing.frets.compactMap({ $0 }) {
+                XCTAssertGreaterThanOrEqual(fret, 0)
+                XCTAssertLessThanOrEqual(fret, board.fretCount,
+                    "minFret \(minFret) produced fret \(fret) past the \(board.fretCount)-fret board")
+            }
+            // Fingered notes still fit under one hand.
+            if let low = voicing.lowestFrettedFret, let high = voicing.highestFret {
+                XCTAssertLessThanOrEqual(high - low, ChordVoicingGenerator.windowSpan)
+            }
+        }
+    }
+
+    func testVoicingAboveBoardIsAllMuted() {
+        // A window that starts beyond the neck has no reachable chord tone, so the
+        // shape is safely all-muted rather than scanning off the end of the board.
+        let board = Fretboard(tuning: InstrumentLibrary.guitar6.tunings[0], fretCount: 3)
+        let voicing = ChordVoicingGenerator.voicing(
+            for: Chord(root: .c, quality: .major), on: board, minimumFret: 10)
+        XCTAssertTrue(voicing.soundingStringIndices.isEmpty,
+            "No shape exists above a 3-fret board; expected an all-muted voicing")
+    }
+
     // MARK: - 4. The curated library's C-major is x32010
 
     func testStandardLibraryCMajorIsKnownShape() {

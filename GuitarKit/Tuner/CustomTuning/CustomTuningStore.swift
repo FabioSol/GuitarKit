@@ -101,6 +101,9 @@ final class CustomTuningStore {
     /// player loses their saved tunings.
     private enum Key {
         static let customTunings = "guitarkit.customTunings.v1"
+        /// Where we stash a blob we COULDN'T decode, so corrupt/old data is never
+        /// silently destroyed (see the init). A future migration can read this.
+        static let corruptBackup = "guitarkit.customTunings.v1.corrupt-backup"
     }
 
     // MARK: The defaults store (injected)
@@ -141,16 +144,28 @@ final class CustomTuningStore {
         self.defaults = defaults
 
         // Load + decode the JSON blob. We read the raw `Data`, then try to JSON-
-        // decode it into our `[String: [CustomTuningDTO]]` map. ANY failure
-        // (missing key on a fresh install, or corrupt/old data) falls back to an
-        // empty library rather than crashing — losing un-decodable custom tunings
-        // is far better than refusing to launch.
+        // decode it into our `[String: [CustomTuningDTO]]` map. ANY failure falls
+        // back to an empty library rather than crashing — refusing to launch over
+        // unreadable tunings would be far worse.
+        //
+        // BUT we distinguish the two failure cases:
+        //   • NO data at all → fresh install: start empty, nothing to preserve.
+        //   • data present but UNDECODABLE → corrupt, or saved by an incompatible
+        //     future/old schema. We start empty so the app works, but we FIRST copy
+        //     the raw blob to a backup key. Without this, the very next save would
+        //     overwrite the original key and silently destroy the player's tunings
+        //     forever; the backup keeps them recoverable by a later migration.
+        let data = defaults.data(forKey: Key.customTunings)
         if
-            let data = defaults.data(forKey: Key.customTunings),
+            let data,
             let decoded = try? JSONDecoder().decode([String: [CustomTuningDTO]].self, from: data)
         {
             self.tuningsByInstrument = decoded
         } else {
+            if let data {
+                // Preserve the unreadable blob before we proceed empty.
+                defaults.set(data, forKey: Key.corruptBackup)
+            }
             self.tuningsByInstrument = [:]
         }
     }

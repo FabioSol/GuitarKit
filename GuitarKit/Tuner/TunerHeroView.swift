@@ -35,6 +35,14 @@ struct TunerHeroView: View {
     /// Drives the one-time completion flourish animation.
     @State private var celebrate = false
 
+    /// The pending "settle back" work for the flourish, held so we can CANCEL it.
+    /// Previously this was a bare `DispatchQueue.main.asyncAfter` with no handle:
+    /// rapidly re-completing, or leaving the view mid-flourish, left the 0.6s
+    /// closure pending to fire later on possibly torn-down/re-celebrating state,
+    /// and overlapping fires could fight. A cancellable `Task` lets each new
+    /// flourish (and `onDisappear`) cancel the previous one cleanly.
+    @State private var settleTask: Task<Void, Never>?
+
     var body: some View {
         VStack(spacing: 28) {
             // THE HEADSTOCK HERO. In tuning mode the active peg + zone come from
@@ -83,10 +91,19 @@ struct TunerHeroView: View {
             guard complete, !reduceMotion else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.5)) { celebrate = true }
             // Settle back after the pulse so it reads as a single restrained beat.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            // A cancellable Task replaces a fire-and-forget asyncAfter: cancel any
+            // in-flight settle first, then schedule this one. If the view leaves or
+            // re-completes before 0.6s, the stale settle is cancelled (see below).
+            settleTask?.cancel()
+            settleTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(0.6))
+                guard !Task.isCancelled else { return }
                 withAnimation(.easeOut(duration: 0.4)) { celebrate = false }
             }
         }
+        // Cancel a pending settle if we leave mid-flourish, so it can't fire on a
+        // torn-down view.
+        .onDisappear { settleTask?.cancel() }
     }
 
     // MARK: - Completion flourish

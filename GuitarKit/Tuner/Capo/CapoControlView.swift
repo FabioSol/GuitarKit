@@ -48,9 +48,13 @@ struct CapoControlView: View {
     /// worse than a tap that simply does nothing at the ceiling.)
     let onIncrement: () -> Void
 
+    /// Called when the player wants to LOWER the capo by one fret — the symmetric
+    /// partner to `onIncrement`, fired by a VoiceOver "decrement" swipe. The owner
+    /// applies the 0...12 clamp, so swiping down at fret 0 is a harmless no-op.
+    let onDecrement: () -> Void
+
     /// Called when the player wants to clear the capo back to fret 0 — fired by
-    /// the delete icon, by a long-press anywhere on the pill, or by a VoiceOver
-    /// "decrement" swipe taken below fret 0.
+    /// the delete icon or by a long-press anywhere on the pill.
     let onReset: () -> Void
 
     // MARK: Body
@@ -81,10 +85,13 @@ struct CapoControlView: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.footnote)
                     .foregroundStyle(GKColor.textSecondary)
-                    // Let sighted users tap the x directly to clear. We use a
-                    // high-priority tap so tapping the x clears instead of
-                    // incrementing the pill underneath it.
-                    .onTapGesture { onReset() }
+                    // Let sighted users tap the x directly to clear. This MUST be a
+                    // `.highPriorityGesture` (not a plain `.onTapGesture`): the pill
+                    // underneath has its own increment tap, and SwiftUI's resolution
+                    // of an inner vs. outer *plain* tap is hit-test/order dependent —
+                    // so a plain inner tap could lose and INCREMENT instead of clear.
+                    // `highPriorityGesture` guarantees the x wins on its own area.
+                    .highPriorityGesture(TapGesture().onEnded { onReset() })
                     .accessibilityHidden(true)
             } else {
                 // RESTING: just the quiet word "Capo", no counter, no x.
@@ -130,11 +137,12 @@ struct CapoControlView: View {
             switch direction {
             case .increment: onIncrement()
             case .decrement:
-                // We don't have a one-fret-down callback (the chip's only manual
-                // step is +1), so a downward swipe maps to the clear/reset
-                // intent. For a non-engaged capo there's nothing to clear, which
-                // is the correct no-op.
-                onReset()
+                // Step DOWN one fret — symmetric with increment. (Previously this
+                // jumped straight to reset, so one down-swipe on a capo at fret 5
+                // landed on 0 and announced "No capo", which reads as a bug to a
+                // VoiceOver user expecting ±1 steps.) The explicit clear lives on
+                // the x and the long-press; the owner clamps so fret 0 no-ops.
+                onDecrement()
             @unknown default:
                 // `accessibilityAdjustableAction`'s direction is a frozen-ish
                 // system enum; this arm future-proofs us against new cases.
@@ -156,6 +164,7 @@ struct CapoControlView: View {
                 CapoControlView(
                     capo: capo,
                     onIncrement: { capo = Capo(fret: capo.fret + 1) },
+                    onDecrement: { capo = Capo(fret: capo.fret - 1) },
                     onReset: { capo = .none }
                 )
                 Text("fret = \(capo.fret)")
