@@ -54,9 +54,41 @@ final class ChordsViewModel {
     let fretCount = 5
 
     // MARK: Tunings
+    //
+    // The Chords tool is TUNING-AWARE: its voicings reflect whatever instrument +
+    // tuning the player has chosen in the Tuner (e.g. Drop D). The shared source of
+    // truth is the app's `InstrumentSelectionStore` — the SAME observable instance
+    // the Tuner writes to when the player picks an instrument/tuning. We hold a
+    // reference to it and DERIVE the tunings on demand (computed below), so when the
+    // store changes the Chords screen re-renders with the new tuning automatically.
+    //
+    // It's optional so previews/tests can construct a model without a store and just
+    // fall back to standard guitar (the old behavior). A caller can also pin an
+    // explicit instrument/tuning (the `fixed*` values) instead of using a store.
+    @ObservationIgnored private let selection: InstrumentSelectionStore?
+    @ObservationIgnored private let fixedInstrument: Instrument?
+    @ObservationIgnored private let fixedTuning: Tuning?
 
-    @ObservationIgnored let currentTuning: Tuning
-    @ObservationIgnored let standardTuning: Tuning
+    /// The instrument currently in effect — from the shared selection store, an
+    /// explicitly pinned instrument, or the standard-guitar default.
+    var currentInstrument: Instrument {
+        fixedInstrument ?? selection?.restoredInstrument() ?? InstrumentLibrary.default
+    }
+
+    /// The instrument's STANDARD (home) tuning — what the `Current ⇄ Standard`
+    /// override compares against. For a guitar this is EADGBE.
+    var standardTuning: Tuning {
+        currentInstrument.defaultTuning
+            ?? Tuning(name: "Standard", category: .standard, strings: [])
+    }
+
+    /// The tuning the player is actually on (e.g. Drop D), resolved from the shared
+    /// selection. Falls back to a pinned tuning, then to standard.
+    var currentTuning: Tuning {
+        if let fixedTuning { return fixedTuning }
+        if let selection { return selection.restoredTuning(for: currentInstrument) }
+        return standardTuning
+    }
 
     // MARK: Audio (playback)
     //
@@ -78,12 +110,14 @@ final class ChordsViewModel {
     /// a main-actor-isolated value (like `InstrumentLibrary.default`) as a DEFAULT
     /// ARGUMENT — that warns. So both params default to `nil` and we resolve the
     /// real defaults INSIDE the init body, exactly as `ScalesViewModel` does.
-    init(instrument: Instrument? = nil, currentTuning: Tuning? = nil) {
-        let instrument = instrument ?? InstrumentLibrary.default
-        let standard = instrument.defaultTuning
-            ?? Tuning(name: "Standard", category: .standard, strings: [])
-        self.standardTuning = standard
-        self.currentTuning = currentTuning ?? standard
+    init(
+        selection: InstrumentSelectionStore? = nil,
+        instrument: Instrument? = nil,
+        currentTuning: Tuning? = nil
+    ) {
+        self.selection = selection
+        self.fixedInstrument = instrument
+        self.fixedTuning = currentTuning
     }
 
     // MARK: Derived — tuning & board

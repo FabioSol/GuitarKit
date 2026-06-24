@@ -46,9 +46,38 @@ final class ScalesViewModel {
     let fretCount = 12
 
     // MARK: Tunings
+    //
+    // The Scales tool is TUNING-AWARE: the highlighted notes reflect the instrument
+    // + tuning the player chose in the Tuner (e.g. Drop D). The shared source of
+    // truth is the app's `InstrumentSelectionStore` — the SAME observable instance
+    // the Tuner writes to. We hold a reference and DERIVE the tunings on demand, so
+    // a tuning change re-renders the Scales board automatically. Optional so
+    // previews/tests fall back to standard guitar; an explicit instrument/tuning can
+    // also be pinned via the `fixed*` values.
+    @ObservationIgnored private let selection: InstrumentSelectionStore?
+    @ObservationIgnored private let fixedInstrument: Instrument?
+    @ObservationIgnored private let fixedTuning: Tuning?
 
-    @ObservationIgnored let currentTuning: Tuning
-    @ObservationIgnored let standardTuning: Tuning
+    /// The instrument currently in effect — from the shared selection store, an
+    /// explicitly pinned instrument, or the standard-guitar default.
+    var currentInstrument: Instrument {
+        fixedInstrument ?? selection?.restoredInstrument() ?? InstrumentLibrary.default
+    }
+
+    /// The instrument's STANDARD (home) tuning — what the `Current ⇄ Standard`
+    /// override maps against.
+    var standardTuning: Tuning {
+        currentInstrument.defaultTuning
+            ?? Tuning(name: "Standard", category: .standard, strings: [])
+    }
+
+    /// The tuning the player is actually on (e.g. Drop D), resolved from the shared
+    /// selection. Falls back to a pinned tuning, then to standard.
+    var currentTuning: Tuning {
+        if let fixedTuning { return fixedTuning }
+        if let selection { return selection.restoredTuning(for: currentInstrument) }
+        return standardTuning
+    }
 
     // MARK: Audio (playback)
 
@@ -61,13 +90,14 @@ final class ScalesViewModel {
     /// - Parameters:
     ///   - instrument: supplies the standard tuning (default = standard guitar).
     ///   - currentTuning: the active tuning to map against; defaults to standard.
-    init(instrument: Instrument? = nil, currentTuning: Tuning? = nil) {
-        // Resolve the main-actor default inside the init (the project's gotcha).
-        let instrument = instrument ?? InstrumentLibrary.default
-        let standard = instrument.defaultTuning
-            ?? Tuning(name: "Standard", category: .standard, strings: [])
-        self.standardTuning = standard
-        self.currentTuning = currentTuning ?? standard
+    init(
+        selection: InstrumentSelectionStore? = nil,
+        instrument: Instrument? = nil,
+        currentTuning: Tuning? = nil
+    ) {
+        self.selection = selection
+        self.fixedInstrument = instrument
+        self.fixedTuning = currentTuning
     }
 
     // MARK: Derived

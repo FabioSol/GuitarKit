@@ -27,19 +27,40 @@ struct RootView: View {
     /// Whether the Settings sheet is showing.
     @State private var showingSettings = false
 
+    /// The player's instrument + tuning selection, OWNED here at the shell so it's
+    /// the single shared source of truth across tools. The Tuner writes to it (when
+    /// the player picks an instrument/tuning), and the tuning-aware Chords/Scales
+    /// tools read from it — so tuning the guitar to Drop D in the Tuner is reflected
+    /// in their voicings/scale shapes. Injected into the environment for the Tuner.
+    /// Seeded in `init` (shared with the Chords/Scales models).
+    @State private var instrumentSelection: InstrumentSelectionStore
+
     // The view models for the harmony tools, OWNED here at the shell so they
     // outlive the per-tool screens (which `.id(selection)` recreates on each
     // switch). Hoisting them up here is what lets two things work at once
     // (slice #21): each tool's state is PRESERVED when you navigate away and
     // back, and the Circle's cross-links can LOAD context into Chords/Scales
-    // before those screens appear.
+    // before those screens appear. Chords/Scales also receive the shared
+    // `instrumentSelection` so they stay tuning-aware (see `init`).
     @State private var circleModel = CircleOfFifthsViewModel()
-    @State private var chordsModel = ChordsViewModel()
-    @State private var scalesModel = ScalesViewModel()
+    @State private var chordsModel: ChordsViewModel
+    @State private var scalesModel: ScalesViewModel
     // The Metronome's model is hoisted here too so its tempo / time signature /
     // accents survive navigating away and back (its view is rebuilt by the
     // `switch` like the others). Audio still stops on leave via `onDisappear`.
     @State private var metronomeModel = MetronomeViewModel()
+
+    /// Build the shell, wiring ONE shared `InstrumentSelectionStore` into both the
+    /// environment (for the Tuner) and the Chords/Scales view models, so all three
+    /// tools agree on the current instrument + tuning. We construct the store here
+    /// and seed each `@State` from it; because it's a reference type, every tool
+    /// holds the same instance and sees the same live updates.
+    init() {
+        let selection = InstrumentSelectionStore()
+        _instrumentSelection = State(initialValue: selection)
+        _chordsModel = State(initialValue: ChordsViewModel(selection: selection))
+        _scalesModel = State(initialValue: ScalesViewModel(selection: selection))
+    }
 
     var body: some View {
         // `ZStack(alignment: .bottom)` layers the tool screen behind the nav,
@@ -69,6 +90,9 @@ struct RootView: View {
         .overlay(alignment: .topTrailing) { settingsButton }
         // Make the global preferences available to every tool below us.
         .environment(settings)
+        // Share the instrument/tuning selection with the Tuner (the Chords/Scales
+        // models already hold the same instance from `init`).
+        .environment(instrumentSelection)
         // Force the user's chosen appearance (or follow the system when `.system`).
         .preferredColorScheme(settings.theme.colorScheme)
         // Present Settings as a sheet wrapped in its own navigation container.

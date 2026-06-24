@@ -58,10 +58,20 @@ struct TunerView: View {
     /// any pitch, no string targets). Mic stays on; the session isn't fed.
     @State private var isChromaticMode = false
 
-    /// The picker's persistent memory (last-used instrument/tuning + usage counts)
-    /// and the player's saved custom tunings.
-    @State private var selection = InstrumentSelectionStore()
+    /// The player's saved custom tunings.
     @State private var customTunings = CustomTuningStore()
+
+    /// The picker's persistent memory (last-used instrument/tuning + usage counts).
+    /// This is the SHARED selection store the app shell owns and injects, so the
+    /// tuning the player picks here also drives the tuning-aware Chords/Scales
+    /// tools. We fall back to an owned instance only when nothing was injected
+    /// (e.g. SwiftUI previews), via the `selection` accessor below.
+    @Environment(InstrumentSelectionStore.self) private var injectedSelection: InstrumentSelectionStore?
+    @State private var ownedSelection = InstrumentSelectionStore()
+
+    /// The selection store actually in use: the shared injected one in the app,
+    /// or the local fallback in previews.
+    private var selection: InstrumentSelectionStore { injectedSelection ?? ownedSelection }
 
     #if DEBUG
     /// The developer A/B knobs (visualization, in-tune threshold, smoothing) and
