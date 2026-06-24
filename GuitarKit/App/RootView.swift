@@ -106,7 +106,8 @@ struct RootView: View {
         case .chords:
             ToolPlaceholderView(tool: .chords)
         case .scales:
-            ToolPlaceholderView(tool: .scales)
+            // The Scales tool (slice #19): tuning-aware fretboard + scale shapes.
+            ScalesView()
         }
     }
 }
