@@ -150,6 +150,34 @@ public enum ChordVoicingGenerator {
         }
     }
 
+    // MARK: - Playability
+
+    /// A rough PLAYABILITY test, used to drop generated shapes a human couldn't
+    /// actually fret. The generator finds in-chord shapes but doesn't reason about
+    /// hands, so it can emit voicings needing five or six independent fingers. This
+    /// filters those out.
+    ///
+    /// The model is deliberately simple (a heuristic, not a finger-by-finger solver):
+    ///   • the fingered span must fit under one hand (≤ `windowSpan`); and
+    ///   • the hand needs at most four fingers, where notes that share a FRET can be
+    ///     covered by ONE barre finger — so "fingers needed" ≈ the number of
+    ///     DISTINCT fingered frets. Open (0) and muted (nil) strings need no finger.
+    ///
+    /// Counting distinct frets (rather than distinct notes) is what makes this accept
+    /// the real barre forms: an F major barre uses frets {1, 2, 3} = three fingers,
+    /// and an A-shape barre uses {B, B+2} = two — while a scattered shape touching
+    /// five different frets (five fingers) is correctly rejected.
+    public static func isPlayable(_ voicing: ChordVoicing, on fretboard: Fretboard) -> Bool {
+        let fretted = voicing.frets.compactMap { $0 }.filter { $0 > 0 }
+        guard let minFret = fretted.min(), let maxFret = fretted.max() else {
+            return true   // only open/muted strings — trivially playable
+        }
+        // Must fit under one hand.
+        guard maxFret - minFret <= windowSpan else { return false }
+        // Distinct frets ≈ fingers (same-fret notes share one barre finger).
+        return Set(fretted).count <= 4
+    }
+
     // MARK: - Heuristic building blocks (private)
 
     /// Find the LOWEST fret on one string, within `[from ... to]`, whose note is a

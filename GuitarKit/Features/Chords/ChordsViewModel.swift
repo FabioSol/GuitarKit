@@ -145,39 +145,53 @@ final class ChordsViewModel {
 
     /// All the voicings the user can cycle through, low → high up the neck.
     ///
-    /// THE FALLBACK RULE (the spec's "curated library as a fallback where
-    /// generation is weak"): when we're in standard guitar tuning WITH NO CAPO and
-    /// the library has a hand-authored shape for this chord, we put that curated
-    /// shape FIRST so the default the user sees is the familiar open chord. The
-    /// generator's alternates follow it for cycling up the neck. In any other
-    /// tuning (or with a capo, which moves the open pitches) we use the generator
-    /// alone.
+    /// THE PLAYABILITY RULE: in standard guitar tuning (no capo) we build the list
+    /// from KNOWN-GOOD shapes only — the curated OPEN shape (`StandardChordLibrary`,
+    /// the familiar nut-position chord) plus the moveable BARRE shapes
+    /// (`MoveableChordLibrary`, slid up the neck by transposition). That guarantees
+    /// every shape we show is actually fingerable and idiomatic, instead of the raw
+    /// generator's note-by-note search, which could emit unplayable five-finger
+    /// shapes. We only fall back to the generator (filtered to playable shapes) when
+    /// those banks have nothing for this chord — an uncommon quality — or when the
+    /// tuning/capo isn't standard guitar, where the fixed shapes don't apply.
     ///
     /// Computed fresh each access — cheap pure work, and it means changing root,
     /// quality, tuning, or capo instantly reflows the list.
     var alternateVoicings: [ChordVoicing] {
-        let generated = ChordVoicingGenerator.alternates(for: chord, on: fretboard)
+        let board = fretboard
 
-        // The library is only valid for un-capo'd standard guitar tuning.
-        let canUseLibrary = !capo.isEngaged
-            && StandardChordLibrary.isStandardGuitar(openStrings: fretboard.openStrings)
+        // The fixed shapes are only valid for un-capo'd standard guitar tuning.
+        let canUseShapes = !capo.isEngaged
+            && StandardChordLibrary.isStandardGuitar(openStrings: board.openStrings)
 
-        guard canUseLibrary,
-              let curated = StandardChordLibrary.voicing(root: root, quality: quality)
-        else {
-            // No curated shape (or wrong tuning): the generator stands alone. If it
-            // somehow produced nothing, hand back a single all-muted placeholder so
-            // the view always has one voicing to render.
-            return generated.isEmpty
-                ? [ChordVoicing(frets: Array(repeating: nil, count: fretboard.stringCount))]
-                : generated
+        if canUseShapes {
+            var result: [ChordVoicing] = []
+            // 1) The familiar open shape first (if curated), so the default the user
+            //    lands on is the nut-position chord they know.
+            if let curated = StandardChordLibrary.voicing(root: root, quality: quality) {
+                result.append(curated)
+            }
+            // 2) Moveable barre shapes up the neck, de-duplicated against the open one.
+            for voicing in MoveableChordLibrary.voicings(root: root, quality: quality, on: board)
+            where !result.contains(voicing) {
+                result.append(voicing)
+            }
+            if !result.isEmpty {
+                // Order low → high so cycling climbs from the open/lowest shape.
+                return result.sorted { ($0.lowestFrettedFret ?? 0) < ($1.lowestFrettedFret ?? 0) }
+            }
+            // Nothing in the banks for this chord → fall through to the generator.
         }
 
-        // Put the curated open shape first, then the generated alternates that
-        // aren't duplicates of it, so cycling moves up the neck from the open shape.
-        var result = [curated]
-        result.append(contentsOf: generated.filter { $0 != curated })
-        return result
+        // FALLBACK: the generator, filtered to drop the physically unplayable shapes
+        // it can produce. If everything was filtered out (or it produced nothing),
+        // hand back a single all-muted placeholder so the view always has one
+        // voicing to render.
+        let generated = ChordVoicingGenerator.alternates(for: chord, on: board)
+            .filter { ChordVoicingGenerator.isPlayable($0, on: board) }
+        return generated.isEmpty
+            ? [ChordVoicing(frets: Array(repeating: nil, count: board.stringCount))]
+            : generated
     }
 
     /// The voicing currently on screen — `alternateVoicings` indexed by the
