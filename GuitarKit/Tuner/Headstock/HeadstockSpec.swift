@@ -40,6 +40,15 @@ struct HeadstockSpec: Codable, Equatable {
     /// head's bounding box (0 = left/top, 1 = right/bottom). These MUST line up
     /// with the tuner posts in the SVG art.
     var pegs: [PegPosition]
+
+    /// The nut ("bone") position + width. Optional — instruments that don't author
+    /// one fall back to `NutSpec.default` (a centred bar). Authored per instrument
+    /// so the bar and the string fan sit on the real neck, even when it's offset
+    /// (the asymmetric bass) or narrow (the violin pegbox).
+    var nut: NutSpec?
+
+    /// The resolved nut, applying the default when none was authored.
+    var resolvedNut: NutSpec { nut ?? .default }
 }
 
 // MARK: - Loading

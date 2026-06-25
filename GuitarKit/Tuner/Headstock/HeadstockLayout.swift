@@ -19,10 +19,37 @@ import CoreGraphics
 /// One peg's normalized position on the headstock. `Codable` so peg anchors can
 /// be authored externally in a designer-facing JSON (see `HeadstockSpec`).
 struct PegPosition: Equatable, Codable {
-    /// 0 (left edge) … 1 (right edge).
+    /// 0 (left edge) … 1 (right edge). This is the DOT position — where the
+    /// tappable circle + note label sit (on the post for most instruments, on the
+    /// button for the violin's side-mounted pegs).
     let x: CGFloat
     /// 0 (top edge) … 1 (bottom edge).
     let y: CGFloat
+
+    /// Optional: where this string's LINE terminates (winds), normalized. Defaults
+    /// to the dot `(x, y)`. It exists so the string can end somewhere OTHER than the
+    /// dot — the violin runs its strings up the pegbox CENTRE, while the dots sit out
+    /// on the side buttons, so a string must not point at the button.
+    var stringX: CGFloat? = nil
+    var stringY: CGFloat? = nil
+
+    /// Optional: whether this string crosses the main nut and gets a fanned line.
+    /// Defaults to `true`. The banjo's 5th (drone) string sets this `false` so it
+    /// doesn't fan from the centre nut and skew the other four off-centre.
+    var crossesNut: Bool? = nil
+}
+
+/// The "bone" at the base of the head — the nut bar the strings cross. Normalized
+/// centre + width, so it can sit where each instrument's neck actually is (e.g. the
+/// asymmetric bass, whose neck is offset to one side).
+struct NutSpec: Equatable, Codable {
+    var x: CGFloat      // centre x (0…1)
+    var y: CGFloat      // centre y (0…1)
+    var width: CGFloat  // width as a fraction of the head width
+
+    /// The fallback for instruments whose JSON doesn't specify a nut: a centred bar
+    /// near the base — the previous hardcoded values.
+    static let `default` = NutSpec(x: 0.5, y: 0.90, width: 0.30)
 }
 
 /// The peg arrangement for an instrument's headstock. `pegs[i]` is the position

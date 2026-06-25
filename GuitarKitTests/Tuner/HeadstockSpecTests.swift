@@ -69,4 +69,68 @@ final class HeadstockSpecTests: XCTestCase {
         XCTAssertNotNil(spec, "guitar.json should be bundled as a resource")
         XCTAssertEqual(spec?.pegs.count, 6)
     }
+
+    // MARK: - Nut + string routing (data-driven)
+
+    func test_decodesNutAndStringRouting() throws {
+        let json = """
+        {
+          "artAsset": "x", "aspectRatio": 0.5,
+          "nut": { "x": 0.57, "y": 0.9, "width": 0.22 },
+          "pegs": [
+            { "x": 0.2, "y": 0.6, "crossesNut": false },
+            { "x": 0.14, "y": 0.7, "stringX": 0.43, "stringY": 0.68 }
+          ]
+        }
+        """.data(using: .utf8)!
+        let spec = try JSONDecoder().decode(HeadstockSpec.self, from: json)
+        XCTAssertEqual(spec.nut, NutSpec(x: 0.57, y: 0.9, width: 0.22))
+        XCTAssertEqual(spec.pegs[0].crossesNut, false)
+        XCTAssertEqual(spec.pegs[1].stringX, 0.43)
+        XCTAssertEqual(spec.pegs[1].stringY, 0.68)
+        // Unspecified routing fields default to nil (→ dot position / crosses nut).
+        XCTAssertNil(spec.pegs[1].crossesNut)
+        XCTAssertNil(spec.pegs[0].stringX)
+    }
+
+    func test_resolvedNut_defaultsWhenAbsent() throws {
+        let json = #"{ "artAsset": null, "aspectRatio": 0.66, "pegs": [] }"#.data(using: .utf8)!
+        let spec = try JSONDecoder().decode(HeadstockSpec.self, from: json)
+        XCTAssertNil(spec.nut)
+        XCTAssertEqual(spec.resolvedNut, NutSpec.default)
+    }
+
+    // MARK: - Every bundled instrument spec is well-formed
+
+    func test_allInstrumentSpecs_loadWithExpectedPegCounts() {
+        // file name → expected peg count (= string count).
+        let expected: [(String, Int)] = [
+            ("guitar", 6), ("guitar-7", 7), ("bass-4", 4), ("bass-5", 5),
+            ("ukulele", 4), ("violin", 4), ("banjo-5", 5)
+        ]
+        for (name, count) in expected {
+            let spec = HeadstockSpec.load(name)
+            XCTAssertNotNil(spec, "\(name).json should be bundled")
+            XCTAssertEqual(spec?.pegs.count, count, "\(name) peg count")
+            XCTAssertNotNil(spec?.nut, "\(name) should author a nut")
+        }
+    }
+
+    func test_banjoDrone_doesNotCrossNut() {
+        // The 5th (drone) string must be excluded from the nut fan so it can't skew
+        // the other four off-centre.
+        let spec = HeadstockSpec.load("banjo-5")
+        XCTAssertEqual(spec?.pegs.first?.crossesNut, false)
+    }
+
+    func test_violinStrings_endAwayFromButtons() {
+        // Every violin string must terminate in the pegbox (central), NOT at the
+        // side-button dot — so dots are out wide while string ends are near centre.
+        let spec = HeadstockSpec.load("violin")!
+        for peg in spec.pegs {
+            XCTAssertNotNil(peg.stringX, "violin strings should route to an explicit end")
+            // String end is far more central than the button dot.
+            XCTAssertLessThan(abs((peg.stringX ?? 0) - 0.5), abs(peg.x - 0.5))
+        }
+    }
 }

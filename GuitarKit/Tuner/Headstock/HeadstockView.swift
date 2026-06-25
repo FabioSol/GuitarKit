@@ -54,11 +54,14 @@ struct HeadstockView: View {
                 // 2) The strings: thin lines fanning from the nut up to each peg.
                 stringLines(in: size)
 
-                // 3) The nut: a short bar where the strings leave the head.
+                // 3) The nut ("bone"): a short bar where the strings leave the head.
+                // Position + width come from the spec so it sits on the real neck
+                // (offset for the asymmetric bass, narrow for the violin pegbox).
+                let nut = spec.resolvedNut
                 Capsule()
                     .fill(GKColor.textSecondary.opacity(0.55))
-                    .frame(width: size.width * 0.30, height: 5)
-                    .position(x: size.width * 0.5, y: size.height * 0.90)
+                    .frame(width: size.width * nut.width, height: 5)
+                    .position(x: size.width * nut.x, y: size.height * nut.y)
 
                 // 4) One peg per string, placed at its normalized position.
                 ForEach(spec.pegs.indices, id: \.self) { index in
@@ -129,20 +132,36 @@ struct HeadstockView: View {
 
     // MARK: - Strings
 
-    /// Thin lines from a tight nut at the bottom fanning up to each peg — the cue
-    /// that ties the pegs to "where the string goes". Drawn beneath the pegs.
+    /// Thin lines fanning from the nut up to where each string winds — the cue that
+    /// ties the pegs to "where the string goes". Drawn beneath the pegs.
+    ///
+    /// Two things are now data-driven (so each instrument behaves correctly):
+    ///   • only strings with `crossesNut != false` fan from the nut, and their nut
+    ///     anchors are spread evenly across the (spec'd) nut bar IN PITCH ORDER — so
+    ///     dropping the banjo's drone out of the fan re-centres the other four; and
+    ///   • each line ends at the string's winding point (`stringX/Y`, default the
+    ///     dot), letting the violin's strings run up the pegbox centre instead of
+    ///     out to the side buttons the dots sit on.
     private func stringLines(in size: CGSize) -> some View {
-        Path { path in
-            let count = spec.pegs.count
-            guard count > 1 else { return }
-            let nutY = 0.90 * size.height
-            for i in spec.pegs.indices {
-                // Evenly spaced nut anchors across a narrow span at the bottom.
-                let frac = CGFloat(i) / CGFloat(count - 1)
-                let nutX = (0.38 + 0.24 * frac) * size.width
+        let nut = spec.resolvedNut
+        let nutY = nut.y * size.height
+        let nutLeft = (nut.x - nut.width / 2) * size.width
+        let nutSpan = nut.width * size.width
+
+        // The strings that actually cross the nut, in pitch (index) order.
+        let fanned = spec.pegs.indices.filter { spec.pegs[$0].crossesNut ?? true }
+
+        return Path { path in
+            guard fanned.count > 0 else { return }
+            for (order, i) in fanned.enumerated() {
+                // Spread the crossing strings evenly across the nut bar.
+                let frac = fanned.count > 1 ? CGFloat(order) / CGFloat(fanned.count - 1) : 0.5
+                let nutX = nutLeft + nutSpan * frac
                 let peg = spec.pegs[i]
+                let endX = (peg.stringX ?? peg.x) * size.width
+                let endY = (peg.stringY ?? peg.y) * size.height
                 path.move(to: CGPoint(x: nutX, y: nutY))
-                path.addLine(to: CGPoint(x: peg.x * size.width, y: peg.y * size.height))
+                path.addLine(to: CGPoint(x: endX, y: endY))
             }
         }
         .stroke(GKColor.textSecondary.opacity(0.30), lineWidth: 1)
