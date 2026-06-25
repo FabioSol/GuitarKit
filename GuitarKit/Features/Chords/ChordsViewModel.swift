@@ -48,10 +48,12 @@ final class ChordsViewModel {
     /// the chord changes so we never index past the end of a shorter list.
     var voicingIndex = 0
 
-    /// How many frets the chord box shows. Five is the conventional chord-box
-    /// height (a nut plus four fret rows), enough for every open shape and most
-    /// moveable ones.
-    let fretCount = 5
+    /// How many frets of NECK the voicing search runs over. This is the board
+    /// length, NOT the diagram height — the diagram shows a sliding 5-fret window
+    /// onto this neck (see `ChordsView.visibleFretCount`). A full octave gives the
+    /// generator room to find alternate shapes UP the neck for the "next voicing"
+    /// cycle; the view then windows + labels them with a position number ("5fr").
+    let fretCount = 12
 
     // MARK: Tunings
     //

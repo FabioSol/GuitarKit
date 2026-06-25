@@ -101,25 +101,38 @@ struct ChordsView: View {
     private let cellWidth: CGFloat = 34
     /// Height of one fret row. Taller than `cellWidth` so each cell is portrait.
     private let cellHeight: CGFloat = 42
+    /// How many fret SPACES the diagram shows at once — the classic chord-box height
+    /// (a window onto the neck). Shapes that don't fit the open frets are shifted up
+    /// into this window with a position number (see `displayBaseFret`).
+    private let visibleFretCount = 5
 
-    /// The chord diagram. Strings run TOP→BOTTOM as thin vertical lines and frets
-    /// run LEFT→RIGHT as horizontal lines, with a thick NUT at the top — the
-    /// standard vertical chord box. Sized portrait and CENTERED. Handedness
-    /// mirrors the string columns.
+    /// The chord diagram. Strings run LEFT→RIGHT as thin vertical lines and frets
+    /// run TOP→BOTTOM, with a thick NUT at the top for open shapes (or a "5fr"
+    /// position number for shapes up the neck). O/X markers sit ON the nut line for
+    /// open/muted strings — fret 0 is NOT its own grid row. Handedness mirrors the
+    /// string columns.
     private var chordBox: some View {
         // String columns left→right. By convention the LOW string is on the left
         // (like looking at the neck head-on, low E nearest you on the left); the
         // left-handed toggle mirrors that so the low string moves to the right.
         let strings = stringDisplayOrder()
-        // Fret rows top→bottom: row 0 is the nut/open area, then frets 1…fretCount.
-        let fretRows = Array(0...model.fretCount)
         // Resolve the voicing + board ONCE per render and hand them to every cell
         // / marker, instead of each cell re-running the generator + library.
         let voicing = model.currentVoicing
         let board = model.fretboard
 
+        // The fret WINDOW to draw. Open/near-nut shapes start at fret 1 (nut shown);
+        // shapes higher up the neck shift the window so the lowest fingered note
+        // sits at the top, marked with a position number instead of a nut. This is
+        // what lets higher voicings actually show their dots (before, anything past
+        // fret 5 fell off the fixed 0…5 grid and drew nothing).
+        let baseFret = displayBaseFret(for: voicing)
+        let displayFrets = Array(baseFret ..< baseFret + visibleFretCount)
+        let showNut = baseFret == 1
+
         return VStack(spacing: 4) {
-            // Top row: O (open) / X (muted) markers above each string column.
+            // O (open) / X (muted) markers above each string column. They sit just
+            // above the nut line; fret 0 (open) is one of these markers, never a row.
             HStack(spacing: 0) {
                 ForEach(strings, id: \.self) { string in
                     Text(openMutedMarker(forString: string, voicing: voicing))
@@ -129,9 +142,11 @@ struct ChordsView: View {
                 }
             }
 
-            // The grid of fret cells. Each row is one fret; each column one string.
+            // The grid of fret cells. Each row is one fret SPACE; each column one
+            // string. Frets start at `baseFret` (1 for open shapes), so there is no
+            // empty fret-0 row.
             VStack(spacing: 0) {
-                ForEach(fretRows, id: \.self) { fret in
+                ForEach(displayFrets, id: \.self) { fret in
                     HStack(spacing: 0) {
                         ForEach(strings, id: \.self) { string in
                             cell(string: string, fret: fret, voicing: voicing, board: board)
@@ -145,11 +160,22 @@ struct ChordsView: View {
                     .fill(GKColor.textSecondary.opacity(0.06))
             )
             .overlay(
-                // A thicker bar along the very top = the NUT, but only when this is
-                // an open-position shape (nothing fingered above fret 0). For shapes
-                // up the neck there's no nut on screen, so we hide it.
-                nutBar(voicing: voicing), alignment: .top
+                // A thicker bar along the very top = the NUT, only for open shapes.
+                nutBar(show: showNut), alignment: .top
             )
+            .overlay(alignment: .topLeading) {
+                // Position number ("5fr") just left of the top fret row, for shapes
+                // up the neck where there's no nut to anchor the diagram. The offset
+                // keeps it outside the grid without shifting the centered box.
+                if !showNut {
+                    Text("\(baseFret)fr")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(GKColor.textSecondary)
+                        .fixedSize()
+                        .frame(height: cellHeight)        // center it on the top row
+                        .offset(x: -30)
+                }
+            }
         }
         // A fixed-size, centered portrait box (not stretched across the screen).
         .frame(maxWidth: .infinity)
@@ -158,6 +184,17 @@ struct ChordsView: View {
         // navigation of a diagram reads poorly. Updates as the voicing changes.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(model.voicingAccessibilityDescription)
+    }
+
+    /// The fret the diagram window STARTS on (its top row). Open and near-nut shapes
+    /// anchor at fret 1 so the nut shows; shapes whose highest fingered note runs
+    /// past the visible window shift up so the lowest fingered note sits at the top
+    /// (and we draw a "Nfr" position number instead of the nut).
+    private func displayBaseFret(for voicing: ChordVoicing) -> Int {
+        let fretted = voicing.frets.compactMap { $0 }.filter { $0 > 0 }
+        guard let highest = fretted.max() else { return 1 } // all open/muted → nut
+        if highest <= visibleFretCount { return 1 }         // fits the open window
+        return fretted.min() ?? 1                            // shift up the neck
     }
 
     /// One cell of the grid: draws the string line + fret line, and a filled dot
@@ -205,11 +242,11 @@ struct ChordsView: View {
         .frame(width: cellWidth, height: cellHeight)
     }
 
-    /// The nut bar: a thick line at the top edge, shown only for open-position
-    /// shapes (no fingered note sits above fret 0 in this voicing).
+    /// The nut bar: a thick line at the top edge, shown only when the diagram is
+    /// anchored at the nut (an open-position shape, `baseFret == 1`).
     @ViewBuilder
-    private func nutBar(voicing: ChordVoicing) -> some View {
-        if isOpenPosition(voicing) {
+    private func nutBar(show: Bool) -> some View {
+        if show {
             Rectangle()
                 .fill(GKColor.textPrimary.opacity(0.6))
                 .frame(height: 3)
@@ -266,15 +303,6 @@ struct ChordsView: View {
     }
 
     // MARK: - Diagram helpers
-
-    /// Whether the current voicing is an OPEN-position shape: nothing is fingered
-    /// above fret 0. Drives whether we draw the nut bar.
-    private func isOpenPosition(_ voicing: ChordVoicing) -> Bool {
-        // `lowestFrettedFret == nil` means a pure open/muted chord; otherwise it's
-        // open position only when the lowest fingered fret is 1 (right at the nut).
-        guard let lowest = voicing.lowestFrettedFret else { return true }
-        return lowest <= 1
-    }
 
     /// The "O" / "X" / " " marker to show above a string column: "O" if it's played
     /// open (fret 0), "X" if muted, blank if it's fingered (the dot speaks for it).
