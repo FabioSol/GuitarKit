@@ -123,14 +123,15 @@ final class HeadstockSpecTests: XCTestCase {
         XCTAssertEqual(spec?.pegs.first?.crossesNut, false)
     }
 
-    func test_violinStrings_endAwayFromButtons() {
-        // Every violin string must terminate in the pegbox (central), NOT at the
-        // side-button dot — so dots are out wide while string ends are near centre.
-        let spec = HeadstockSpec.load("violin")!
-        for peg in spec.pegs {
-            XCTAssertNotNil(peg.stringX, "violin strings should route to an explicit end")
-            // String end is far more central than the button dot.
-            XCTAssertLessThan(abs((peg.stringX ?? 0) - 0.5), abs(peg.x - 0.5))
-        }
+    func test_violin_hidesStrings() {
+        // The violin draws no string lines (its strings hide inside the pegbox).
+        let spec = HeadstockSpec.load("violin")
+        XCTAssertEqual(spec?.showStrings, false)
+    }
+
+    func test_showStrings_defaultsTrueWhenAbsent() throws {
+        let json = #"{ "artAsset": null, "aspectRatio": 0.66, "pegs": [] }"#.data(using: .utf8)!
+        let spec = try JSONDecoder().decode(HeadstockSpec.self, from: json)
+        XCTAssertNil(spec.showStrings)   // absent → view treats as `true`
     }
 }

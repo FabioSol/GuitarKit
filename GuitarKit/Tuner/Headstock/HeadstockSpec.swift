@@ -49,6 +49,12 @@ struct HeadstockSpec: Codable, Equatable {
 
     /// The resolved nut, applying the default when none was authored.
     var resolvedNut: NutSpec { nut ?? .default }
+
+    /// Whether to draw the fanned string lines. Optional; defaults to `true`. The
+    /// violin turns this off — its strings are hidden inside the pegbox, so drawn
+    /// lines would just be clutter (there's nowhere on the side-mounted pegs for a
+    /// string to visibly run to).
+    var showStrings: Bool?
 }
 
 // MARK: - Loading

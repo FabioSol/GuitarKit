@@ -52,7 +52,10 @@ struct HeadstockView: View {
                 headstockBody
 
                 // 2) The strings: thin lines fanning from the nut up to each peg.
-                stringLines(in: size)
+                // Skipped for instruments that opt out (the violin).
+                if spec.showStrings ?? true {
+                    stringLines(in: size)
+                }
 
                 // 3) The nut ("bone"): a short bar where the strings leave the head.
                 // Position + width come from the spec so it sits on the real neck
