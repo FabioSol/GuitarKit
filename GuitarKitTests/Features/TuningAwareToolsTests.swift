@@ -26,6 +26,25 @@ final class TuningAwareToolsTests: XCTestCase {
         return store
     }
 
+    /// A fresh custom-tuning store on a throwaway suite, optionally pre-seeded with
+    /// `tuning` for `instrumentID`.
+    private func customStore(saving tuning: Tuning? = nil, forInstrumentID instrumentID: String = "guitar-6") -> CustomTuningStore {
+        let suite = "guitarkit.tests.tuningaware.custom.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let store = CustomTuningStore(defaults: defaults)
+        if let tuning { store.save(tuning, forInstrumentID: instrumentID) }
+        return store
+    }
+
+    private func note(_ pc: PitchClass, _ oct: Int) -> Note { Note(pitchClass: pc, octave: oct) }
+
+    /// DADGAD — a popular custom/alternate tuning whose low string is a D.
+    private var dadgad: Tuning {
+        Tuning(name: "DADGAD", category: .alternate,
+               strings: [note(.d,2), note(.a,2), note(.d,3), note(.g,3), note(.a,3), note(.d,4)])
+    }
+
     // MARK: - Chords
 
     func test_chords_followSelectedTuning_dropD() {
@@ -49,6 +68,43 @@ final class TuningAwareToolsTests: XCTestCase {
         model.useStandardOverride = true
         XCTAssertEqual(model.activeTuning.strings.first?.pitchClass, .e)
         XCTAssertEqual(model.activeTuning.strings, model.standardTuning.strings)
+    }
+
+    // MARK: - Custom tunings
+
+    func test_chords_followSavedCustomTuning_dadgad() {
+        // The player saved DADGAD and selected it; its name is recorded but it is
+        // NOT a built-in preset, so it must be resolved via the custom store.
+        let model = ChordsViewModel(
+            selection: store(recording: "guitar-6", "DADGAD"),
+            customTunings: customStore(saving: dadgad)
+        )
+
+        XCTAssertEqual(model.currentTuning.name, "DADGAD",
+            "Chords should resolve a saved CUSTOM tuning, not just built-in presets")
+        XCTAssertEqual(model.currentTuning.strings, dadgad.strings)
+        // High string drops to D in DADGAD, unlike standard's high E.
+        XCTAssertEqual(model.currentTuning.strings.last?.pitchClass, .d)
+        XCTAssertEqual(model.standardTuning.strings.last?.pitchClass, .e)
+    }
+
+    func test_scales_followSavedCustomTuning_dadgad() {
+        let model = ScalesViewModel(
+            selection: store(recording: "guitar-6", "DADGAD"),
+            customTunings: customStore(saving: dadgad)
+        )
+        XCTAssertEqual(model.currentTuning.strings, dadgad.strings)
+    }
+
+    func test_presetWinsOverCustomOfSameName() {
+        // A preset and a custom share the name "Drop D": the built-in preset wins.
+        let model = ChordsViewModel(
+            selection: store(recording: "guitar-6", "Drop D"),
+            customTunings: customStore(saving: Tuning(name: "Drop D", category: .alternate,
+                strings: [note(.c,2), note(.a,2), note(.d,3), note(.g,3), note(.b,3), note(.e,4)]))
+        )
+        // Built-in Drop D's low string is D2; if the custom (low C) had won it'd be C.
+        XCTAssertEqual(model.currentTuning.strings.first, note(.d, 2))
     }
 
     // MARK: - Scales

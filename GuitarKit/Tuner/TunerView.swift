@@ -58,20 +58,20 @@ struct TunerView: View {
     /// any pitch, no string targets). Mic stays on; the session isn't fed.
     @State private var isChromaticMode = false
 
-    /// The player's saved custom tunings.
-    @State private var customTunings = CustomTuningStore()
-
-    /// The picker's persistent memory (last-used instrument/tuning + usage counts).
-    /// This is the SHARED selection store the app shell owns and injects, so the
-    /// tuning the player picks here also drives the tuning-aware Chords/Scales
-    /// tools. We fall back to an owned instance only when nothing was injected
-    /// (e.g. SwiftUI previews), via the `selection` accessor below.
+    /// The picker's persistent memory (last-used instrument/tuning + usage counts)
+    /// and the player's saved custom tunings. Both are SHARED stores the app shell
+    /// owns and injects, so the tuning the player picks/saves here also drives the
+    /// tuning-aware Chords/Scales tools. We fall back to owned instances only when
+    /// nothing was injected (e.g. SwiftUI previews), via the accessors below.
     @Environment(InstrumentSelectionStore.self) private var injectedSelection: InstrumentSelectionStore?
+    @Environment(CustomTuningStore.self) private var injectedCustomTunings: CustomTuningStore?
     @State private var ownedSelection = InstrumentSelectionStore()
+    @State private var ownedCustomTunings = CustomTuningStore()
 
-    /// The selection store actually in use: the shared injected one in the app,
-    /// or the local fallback in previews.
+    /// The stores actually in use: the shared injected ones in the app, or the
+    /// local fallbacks in previews.
     private var selection: InstrumentSelectionStore { injectedSelection ?? ownedSelection }
+    private var customTunings: CustomTuningStore { injectedCustomTunings ?? ownedCustomTunings }
 
     #if DEBUG
     /// The developer A/B knobs (visualization, in-tune threshold, smoothing) and
@@ -385,7 +385,14 @@ struct TunerView: View {
     /// so the Tuner reopens where they left off instead of cold-starting on guitar.
     private func restoreSelection() {
         let instrument = selection.restoredInstrument()
-        session.select(instrument: instrument, tuning: selection.restoredTuning(for: instrument))
+        // Resolve against this instrument's saved customs too, so a custom tuning
+        // (e.g. DADGAD) the player was last on is restored on relaunch — not just
+        // the built-in presets.
+        let customs = customTunings.tunings(forInstrumentID: instrument.id)
+        session.select(
+            instrument: instrument,
+            tuning: selection.restoredTuning(for: instrument, customTunings: customs)
+        )
     }
 
     /// Route a peg tap: in tone-mode play that string's target pitch; otherwise

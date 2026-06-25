@@ -66,6 +66,7 @@ final class ChordsViewModel {
     // fall back to standard guitar (the old behavior). A caller can also pin an
     // explicit instrument/tuning (the `fixed*` values) instead of using a store.
     @ObservationIgnored private let selection: InstrumentSelectionStore?
+    @ObservationIgnored private let customTunings: CustomTuningStore?
     @ObservationIgnored private let fixedInstrument: Instrument?
     @ObservationIgnored private let fixedTuning: Tuning?
 
@@ -82,12 +83,15 @@ final class ChordsViewModel {
             ?? Tuning(name: "Standard", category: .standard, strings: [])
     }
 
-    /// The tuning the player is actually on (e.g. Drop D), resolved from the shared
-    /// selection. Falls back to a pinned tuning, then to standard.
+    /// The tuning the player is actually on (e.g. Drop D, or a saved custom like
+    /// DADGAD), resolved from the shared selection — consulting built-in presets
+    /// first and the player's saved custom tunings second. Falls back to a pinned
+    /// tuning, then to standard.
     var currentTuning: Tuning {
         if let fixedTuning { return fixedTuning }
-        if let selection { return selection.restoredTuning(for: currentInstrument) }
-        return standardTuning
+        guard let selection else { return standardTuning }
+        let customs = customTunings?.tunings(forInstrumentID: currentInstrument.id) ?? []
+        return selection.restoredTuning(for: currentInstrument, customTunings: customs)
     }
 
     // MARK: Audio (playback)
@@ -112,10 +116,12 @@ final class ChordsViewModel {
     /// real defaults INSIDE the init body, exactly as `ScalesViewModel` does.
     init(
         selection: InstrumentSelectionStore? = nil,
+        customTunings: CustomTuningStore? = nil,
         instrument: Instrument? = nil,
         currentTuning: Tuning? = nil
     ) {
         self.selection = selection
+        self.customTunings = customTunings
         self.fixedInstrument = instrument
         self.fixedTuning = currentTuning
     }

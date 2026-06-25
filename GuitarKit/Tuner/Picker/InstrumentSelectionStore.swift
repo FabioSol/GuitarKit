@@ -241,16 +241,35 @@ final class InstrumentSelectionStore {
     /// - Parameter instrument: the instrument whose presets we resolve against —
     ///   normally the result of `restoredInstrument()`.
     func restoredTuning(for instrument: Instrument) -> Tuning {
-        if
-            let name = lastTuningName,
-            let match = instrument.tunings.first(where: { $0.name == name })
-        {
-            return match
+        restoredTuning(for: instrument, customTunings: [])
+    }
+
+    /// Like `restoredTuning(for:)`, but also considers the player's saved CUSTOM
+    /// tunings when resolving the stored name. We take the customs as a plain
+    /// `[Tuning]` (rather than referencing `CustomTuningStore`) so this store stays
+    /// decoupled from where customs live — the caller hands in
+    /// `customTuningStore.tunings(forInstrumentID:)`.
+    ///
+    /// Resolution order: a built-in PRESET by name wins; then a CUSTOM by name;
+    /// then the instrument's standard/home tuning. This is what makes the
+    /// tuning-aware Chords/Scales tools (and the Tuner's relaunch restore) reflect a
+    /// custom tuning like "DADGAD" the player saved, not just the built-in presets.
+    ///
+    /// - Parameters:
+    ///   - instrument: the instrument whose presets we resolve against.
+    ///   - customTunings: that instrument's saved custom tunings (may be empty).
+    func restoredTuning(for instrument: Instrument, customTunings: [Tuning]) -> Tuning {
+        if let name = lastTuningName {
+            if let preset = instrument.tunings.first(where: { $0.name == name }) {
+                return preset
+            }
+            if let custom = customTunings.first(where: { $0.name == name }) {
+                return custom
+            }
         }
-        // No stored name, or it didn't match this instrument's presets: use the
-        // home tuning. The final `?? ...` guards the (never-shipped) empty-tunings
-        // case so this can't crash — same defensive placeholder TuningSessionModel
-        // uses.
+        // No stored name, or it matched neither a preset nor a custom: use the home
+        // tuning. The final `?? ...` guards the (never-shipped) empty-tunings case
+        // so this can't crash — same defensive placeholder TuningSessionModel uses.
         return instrument.defaultTuning
             ?? Tuning(name: "Standard", category: .standard, strings: [])
     }

@@ -35,6 +35,11 @@ struct RootView: View {
     /// Seeded in `init` (shared with the Chords/Scales models).
     @State private var instrumentSelection: InstrumentSelectionStore
 
+    /// The player's saved CUSTOM tunings, also owned at the shell so the Tuner and
+    /// the tuning-aware Chords/Scales tools resolve the same customs. Seeded in
+    /// `init` and injected into the environment for the Tuner.
+    @State private var customTunings: CustomTuningStore
+
     // The view models for the harmony tools, OWNED here at the shell so they
     // outlive the per-tool screens (which `.id(selection)` recreates on each
     // switch). Hoisting them up here is what lets two things work at once
@@ -57,9 +62,11 @@ struct RootView: View {
     /// holds the same instance and sees the same live updates.
     init() {
         let selection = InstrumentSelectionStore()
+        let customs = CustomTuningStore()
         _instrumentSelection = State(initialValue: selection)
-        _chordsModel = State(initialValue: ChordsViewModel(selection: selection))
-        _scalesModel = State(initialValue: ScalesViewModel(selection: selection))
+        _customTunings = State(initialValue: customs)
+        _chordsModel = State(initialValue: ChordsViewModel(selection: selection, customTunings: customs))
+        _scalesModel = State(initialValue: ScalesViewModel(selection: selection, customTunings: customs))
     }
 
     var body: some View {
@@ -90,9 +97,10 @@ struct RootView: View {
         .overlay(alignment: .topTrailing) { settingsButton }
         // Make the global preferences available to every tool below us.
         .environment(settings)
-        // Share the instrument/tuning selection with the Tuner (the Chords/Scales
-        // models already hold the same instance from `init`).
+        // Share the instrument/tuning selection + custom tunings with the Tuner
+        // (the Chords/Scales models already hold the same instances from `init`).
         .environment(instrumentSelection)
+        .environment(customTunings)
         // Force the user's chosen appearance (or follow the system when `.system`).
         .preferredColorScheme(settings.theme.colorScheme)
         // Present Settings as a sheet wrapped in its own navigation container.
