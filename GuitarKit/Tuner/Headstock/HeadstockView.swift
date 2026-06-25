@@ -148,15 +148,22 @@ struct HeadstockView: View {
         let nutLeft = (nut.x - nut.width / 2) * size.width
         let nutSpan = nut.width * size.width
 
+        // Keep the outer strings off the very ENDS of the nut bar — on a real nut
+        // the first and last strings sit a little inside the edges, not flush. We
+        // spread the fan across the central `(1 - 2·inset)` of the bar.
+        let edgeInset: CGFloat = 0.12
+        let fanLeft = nutLeft + nutSpan * edgeInset
+        let fanSpan = nutSpan * (1 - 2 * edgeInset)
+
         // The strings that actually cross the nut, in pitch (index) order.
         let fanned = spec.pegs.indices.filter { spec.pegs[$0].crossesNut ?? true }
 
         return Path { path in
             guard fanned.count > 0 else { return }
             for (order, i) in fanned.enumerated() {
-                // Spread the crossing strings evenly across the nut bar.
+                // Spread the crossing strings evenly across the inset nut span.
                 let frac = fanned.count > 1 ? CGFloat(order) / CGFloat(fanned.count - 1) : 0.5
-                let nutX = nutLeft + nutSpan * frac
+                let nutX = fanLeft + fanSpan * frac
                 let peg = spec.pegs[i]
                 let endX = (peg.stringX ?? peg.x) * size.width
                 let endY = (peg.stringY ?? peg.y) * size.height
