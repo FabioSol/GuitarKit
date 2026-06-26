@@ -83,8 +83,6 @@ struct MetronomeView: View {
                 .padding(.bottom, 96)
             }
         }
-        // Release the audio session and stop the click when leaving the tool.
-        .onDisappear { model.shutdown() }
         // Sync the sound set + per-beat haptic from Settings (their home now),
         // on appear and whenever the user changes them in Settings.
         .onAppear { applyMetronomeSettings() }

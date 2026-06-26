@@ -21,11 +21,9 @@ import Foundation
 @Observable
 final class ChordsViewModel {
 
-    /// How the notes in the chord box are labeled. Mirrors `ScalesViewModel
-    /// .LabelMode` so the two sibling tools feel identical:
-    ///   • `.noteNames` → "C", "E", "G" on the dots.
-    ///   • `.degrees`   → the chord degree ("1", "3", "5", "♭7"…).
-    enum LabelMode: CaseIterable, Hashable { case noteNames, degrees }
+    /// How the notes in the chord box are labeled — the shared toggle both tools
+    /// use, so Chords and Scales feel identical.
+    typealias LabelMode = ToolLabelMode
 
     // MARK: User choices
 
@@ -58,74 +56,42 @@ final class ChordsViewModel {
     // MARK: Tunings
     //
     // The Chords tool is TUNING-AWARE: its voicings reflect whatever instrument +
-    // tuning the player has chosen in the Tuner (e.g. Drop D). The shared source of
-    // truth is the app's `InstrumentSelectionStore` — the SAME observable instance
-    // the Tuner writes to when the player picks an instrument/tuning. We hold a
-    // reference to it and DERIVE the tunings on demand (computed below), so when the
-    // store changes the Chords screen re-renders with the new tuning automatically.
-    //
-    // It's optional so previews/tests can construct a model without a store and just
-    // fall back to standard guitar (the old behavior). A caller can also pin an
-    // explicit instrument/tuning (the `fixed*` values) instead of using a store.
-    @ObservationIgnored private let selection: InstrumentSelectionStore?
-    @ObservationIgnored private let customTunings: CustomTuningStore?
-    @ObservationIgnored private let fixedInstrument: Instrument?
-    @ObservationIgnored private let fixedTuning: Tuning?
+    // tuning the player has chosen in the Tuner (e.g. Drop D). The derivation lives
+    // in the shared `InstrumentTuningContext` (the SAME logic the Scales tool uses),
+    // so when the player's selection changes the Chords screen reflows automatically.
+    @ObservationIgnored private let tuningContext: InstrumentTuningContext
 
-    /// The instrument currently in effect — from the shared selection store, an
-    /// explicitly pinned instrument, or the standard-guitar default.
-    var currentInstrument: Instrument {
-        fixedInstrument ?? selection?.restoredInstrument() ?? InstrumentLibrary.default
-    }
+    /// The instrument currently in effect (shared selection / pinned / default).
+    var currentInstrument: Instrument { tuningContext.currentInstrument }
 
     /// The instrument's STANDARD (home) tuning — what the `Current ⇄ Standard`
     /// override compares against. For a guitar this is EADGBE.
-    var standardTuning: Tuning {
-        currentInstrument.defaultTuning
-            ?? Tuning(name: "Standard", category: .standard, strings: [])
-    }
+    var standardTuning: Tuning { tuningContext.standardTuning }
 
-    /// The tuning the player is actually on (e.g. Drop D, or a saved custom like
-    /// DADGAD), resolved from the shared selection — consulting built-in presets
-    /// first and the player's saved custom tunings second. Falls back to a pinned
-    /// tuning, then to standard.
-    var currentTuning: Tuning {
-        if let fixedTuning { return fixedTuning }
-        guard let selection else { return standardTuning }
-        let customs = customTunings?.tunings(forInstrumentID: currentInstrument.id) ?? []
-        return selection.restoredTuning(for: currentInstrument, customTunings: customs)
-    }
+    /// The tuning the player is actually on (preset → custom → standard).
+    var currentTuning: Tuning { tuningContext.currentTuning }
 
     // MARK: Audio (playback)
-    //
-    // Each tool owns its OWN tone generator + session coordinator so the tools
-    // don't fight over the shared audio session — this copies the pattern from
-    // `ScalesViewModel` exactly.
 
-    @ObservationIgnored private let tone = ToneGenerator()
-    @ObservationIgnored private let coordinator = AudioSessionCoordinator()
-    @ObservationIgnored private var playTask: Task<Void, Never>?
+    @ObservationIgnored private let tonePlayer = ToolTonePlayer()
 
     // MARK: Init
 
     /// - Parameters:
     ///   - instrument: supplies the standard tuning (default = standard guitar).
     ///   - currentTuning: the active tuning to voice against; defaults to standard.
-    ///
-    /// THE MAIN-ACTOR GOTCHA: in this main-actor-by-default project we must NOT use
-    /// a main-actor-isolated value (like `InstrumentLibrary.default`) as a DEFAULT
-    /// ARGUMENT — that warns. So both params default to `nil` and we resolve the
-    /// real defaults INSIDE the init body, exactly as `ScalesViewModel` does.
     init(
         selection: InstrumentSelectionStore? = nil,
         customTunings: CustomTuningStore? = nil,
         instrument: Instrument? = nil,
         currentTuning: Tuning? = nil
     ) {
-        self.selection = selection
-        self.customTunings = customTunings
-        self.fixedInstrument = instrument
-        self.fixedTuning = currentTuning
+        self.tuningContext = InstrumentTuningContext(
+            selection: selection,
+            customTunings: customTunings,
+            instrument: instrument,
+            currentTuning: currentTuning
+        )
     }
 
     // MARK: Derived — tuning & board
@@ -300,52 +266,20 @@ final class ChordsViewModel {
 
     // MARK: Playback
 
-    /// Play the current voicing as a BLOCK chord — all notes "together".
-    ///
-    /// HONEST AUDIO LIMITATION: our `ToneGenerator` can only sound ONE pitch at a
-    /// time (it's a single oscillator built for the tuner's "tap a peg" tone). A
-    /// true simultaneous block chord would need a polyphonic synth we don't have
-    /// here. So "block" is implemented as a VERY fast arpeggio (~10 ms between
-    /// notes) — fast enough to read as a single strum-stab — and "strum" as a
-    /// slower one (~40 ms) you can hear roll low → high. It's a deliberate,
-    /// documented approximation, not the real thing.
-    func playBlock() { playArpeggio(staggerMs: 10) }
+    /// Play the current voicing as a true block chord: all notes sounding
+    /// simultaneously through a polyphonic oscillator mix.
+    func playBlock() {
+        tonePlayer.playChord(currentVoicing.playedNotes(on: fretboard), tailMs: 600)
+    }
 
-    /// Play the current voicing as a STRUM: the same notes, but staggered ~40 ms
-    /// apart low → high so you hear the pick sweep across the strings.
+    /// Play the current voicing as a strum: notes low → high, ~40 ms apart, so
+    /// you hear the pick sweep across the strings.
     func playStrum() { playArpeggio(staggerMs: 40) }
 
     /// Stop any in-progress playback immediately.
-    func stopPlayback() { playTask?.cancel(); tone.stop() }
+    func stopPlayback() { tonePlayer.stop() }
 
-    /// Shared playback engine for block/strum: sound the voicing's notes low → high
-    /// with `staggerMs` between onsets, then let the final note ring briefly.
-    ///
-    /// Because a single `ToneGenerator` can't hold multiple pitches, each new note
-    /// retargets the same oscillator. That means you mostly hear the LAST note
-    /// sustain rather than a true chord — again, an honest limitation of the
-    /// one-voice generator. The low-to-high sweep is what sells "this is a chord
-    /// being strummed."
     private func playArpeggio(staggerMs: Int) {
-        playTask?.cancel()
-        try? coordinator.configureForPlayback()
-
-        // Only the strings that actually sound, low → high, as concrete notes.
-        let notes = currentVoicing.playedNotes(on: fretboard)
-        guard !notes.isEmpty else { return }
-
-        let calculator = PitchCalculator()
-        playTask = Task { @MainActor in
-            for note in notes {
-                if Task.isCancelled { break }
-                tone.play(frequencyHz: calculator.frequency(of: note))
-                try? await Task.sleep(for: .milliseconds(staggerMs))
-            }
-            // Let the chord ring a beat after the last onset, then release.
-            if !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(450))
-            }
-            tone.stop()
-        }
+        tonePlayer.play(currentVoicing.playedNotes(on: fretboard), gapMs: staggerMs, tailMs: 450)
     }
 }

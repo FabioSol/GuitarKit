@@ -26,7 +26,7 @@ final class TuningSessionModel {
     /// The pure session. Mutating it (via `ingest`/`lock`) is what drives the
     /// `@Observable` updates SwiftUI re-renders on. Read-only forwarding
     /// properties below expose just what the view needs.
-    @ObservationIgnored private var session: TuningSession
+    private var session: TuningSession
 
     // MARK: Collaborators
 

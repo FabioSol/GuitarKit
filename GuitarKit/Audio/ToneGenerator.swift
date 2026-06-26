@@ -27,6 +27,25 @@
 import AVFoundation
 import Observation
 
+// MARK: - The tone-playback seam
+
+/// The small surface the tuner needs to play a peg's pitch: start a tone, stop
+/// it, fully tear down, and ask what's currently sounding. Behind a protocol so
+/// the `TunerCoordinator` (which decides WHEN to play/stop during mode changes)
+/// can be unit-tested with a silent fake — no `AVAudioEngine` required.
+@MainActor
+protocol TonePlaying: AnyObject {
+    /// The frequency currently sounding, or `nil` when silent. Drives the
+    /// tone-mode peg highlight.
+    var currentFrequencyHz: Double? { get }
+    /// Start (or retune to) a sustained tone at this frequency.
+    func play(frequencyHz: Double)
+    /// Stop the current tone but keep the engine warm for the next play.
+    func stop()
+    /// Stop and release the audio engine entirely (leaving tone-mode).
+    func shutdown()
+}
+
 /// Plays a single, sustained, harmonic-rich tone through the speaker.
 ///
 /// `@Observable` so SwiftUI can react to `isPlaying` (e.g. to highlight the
@@ -37,7 +56,7 @@ import Observation
 /// in `AudioInputEngine`).
 @MainActor
 @Observable
-final class ToneGenerator {
+final class ToneGenerator: TonePlaying {
 
     // MARK: Published output
 
@@ -116,6 +135,10 @@ final class ToneGenerator {
     /// milliseconds — fast enough to feel instant, slow enough to kill the click.
     @ObservationIgnored private let envelopeRate: Float = 0.0005
 
+    /// Scheduled by `stop()` to tear down the engine after the fade-out completes.
+    /// Cancelled by `play(...)` if the tone is restarted before the engine shuts down.
+    @ObservationIgnored private var stopTask: Task<Void, Never>?
+
     init() {}
 
     // MARK: Public API — tap-to-toggle sustain
@@ -140,6 +163,8 @@ final class ToneGenerator {
             stop()
             return
         }
+
+        stopTask?.cancel()  // abort any pending engine shutdown
 
         // Make sure the engine is up (first play, or after a previous stop).
         do {
@@ -168,28 +193,39 @@ final class ToneGenerator {
 
     /// Stop any sounding tone. Safe to call when nothing is playing.
     ///
-    /// We don't yank the engine down instantly — we aim the envelope at 0 so the
-    /// tone fades OUT smoothly (no click), and leave the engine running so the
-    /// next tap starts instantly. The engine is only fully torn down by
-    /// `shutdown()` (called when leaving the Tuner).
+    /// Aims the envelope at 0 for a click-free fade-out, then schedules an engine
+    /// shutdown ~50 ms later (just past the fade duration of 1/envelopeRate ≈ 45 ms).
+    /// Leaving the engine running for that window means a rapid replay starts
+    /// instantly; once it's actually idle the engine tears down so it doesn't
+    /// compete with concurrent engines (e.g. the polyphonic player or the metronome).
+    /// `shutdown()` — called when truly leaving the feature — cancels the task and
+    /// tears down immediately.
     func stop() {
-        // Aim the envelope at silence → the render callback fades the tone OUT.
         envelopeTarget = 0
-
-        // Update UI state immediately; the few-millisecond fade finishes in the
-        // background. (The peg un-highlights right away, which feels responsive.)
         isPlaying = false
         currentFrequencyHz = nil
+
+        stopTask?.cancel()
+        stopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard let self, !Task.isCancelled, self.envelopeTarget == 0 else { return }
+            self.tearDownEngine()
+        }
     }
 
     /// Fully tear down the engine and release the output. The orchestrator calls
-    /// this when LEAVING the Tuner so we don't hold the audio hardware. Mirrors
-    /// `AudioInputEngine.stop()`'s teardown for the mic.
+    /// this when LEAVING the Tuner so we don't hold the audio hardware. Cancels
+    /// any deferred-stop task and tears down immediately (no waiting for the fade).
     func shutdown() {
-        guard isEngineRunning else { return }
+        stopTask?.cancel()
+        isPlaying = false
+        currentFrequencyHz = nil
+        tearDownEngine()
+    }
 
-        stop()                      // make sure state reads silent
-        envelopeGain = 0            // hard-silence; we're tearing down anyway
+    private func tearDownEngine() {
+        guard isEngineRunning else { return }
+        envelopeGain = 0            // hard-silence before the engine stops
         engine.stop()
         if let node = sourceNode {
             engine.detach(node)

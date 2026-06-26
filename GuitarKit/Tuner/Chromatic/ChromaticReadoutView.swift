@@ -39,7 +39,9 @@ struct ChromaticReadoutView: View {
                     if let reading {
                         // Big nearest-note name, colored by how in-tune it is.
                         Text(reading.note.name)
-                            .font(GKFont.heroNote)
+                            .heroNoteFont()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)   // shrink-to-fit at large Dynamic Type sizes
                             .foregroundStyle(color(for: zone))
                             .accessibilityLabel(accessibilityPhrase(reading, zone))
 
@@ -52,7 +54,7 @@ struct ChromaticReadoutView: View {
                             .accessibilityHidden(true)
                     } else {
                         Text("—")
-                            .font(GKFont.heroNote)
+                            .heroNoteFont()
                             .foregroundStyle(GKColor.textSecondary)
                         Text("Play any note")
                             .font(GKFont.caption)

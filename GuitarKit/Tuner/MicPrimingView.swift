@@ -71,7 +71,7 @@ struct MicPrimingView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// The shared ambient gradient (mirrors `ToolPlaceholderView.backdrop`).
+    /// The shared ambient gradient — the app's subtle accent-tinted backdrop.
     private var backdrop: some View {
         LinearGradient(
             colors: [GKColor.accent.opacity(0.18), GKColor.background],

@@ -34,6 +34,12 @@ protocol AudioInputProviding: AnyObject {
     /// to this to animate a meter. It's read-only to consumers (`get`).
     var level: Float { get }
 
+    /// Whether capture is currently running. Lets the coordinator re-assert the
+    /// engine on foreground ONLY when it's actually dead, instead of redundantly
+    /// re-attaching/reconfiguring a healthy engine (which can thrash the audio
+    /// session on a real device).
+    var isRunning: Bool { get }
+
     /// Start capturing from the source. May throw if the audio session or
     /// engine fails to start (e.g. another app holds the mic).
     func start() throws
@@ -79,7 +85,7 @@ final class AudioInputEngine: AudioInputProviding {
 
     /// Whether we've installed a tap / started — guards against double start or
     /// stop, which AVAudioEngine dislikes.
-    @ObservationIgnored private var isRunning = false
+    @ObservationIgnored private(set) var isRunning = false
 
     /// Optional downstream consumer of raw buffers (the future pitch detector).
     ///
@@ -124,10 +130,13 @@ final class AudioInputEngine: AudioInputProviding {
 
         // 1) AUDIO SESSION. The shared session arbitrates audio across apps.
         let session = AVAudioSession.sharedInstance()
-        // `.record` category = we capture input. `.measurement` mode disables
-        // most of the OS's automatic gain/EQ so we get the raw signal a tuner
-        // wants. `.duckOthers` politely lowers other apps' audio if any.
-        try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
+        // `.playAndRecord` allows simultaneous input (mic) and output (e.g. the
+        // metronome), so background audio keeps playing while the tuner listens.
+        // `.measurement` disables the OS's AGC/EQ for a clean pitch-detection
+        // signal. `.defaultToSpeaker` routes output to the speaker, not the
+        // earpiece. `.duckOthers` politely lowers other apps' audio.
+        try session.setCategory(.playAndRecord, mode: .measurement,
+                                options: [.defaultToSpeaker, .duckOthers])
         try session.setActive(true)
 
         // 2) INPUT NODE + its native format (sample rate, channel count). We tap
@@ -183,10 +192,8 @@ final class AudioInputEngine: AudioInputProviding {
 
         // Decay the meter to zero so a stale level doesn't linger on screen.
         level = 0
-
-        // Deactivate our session so other apps can resume normal audio. We
-        // ignore the throw here because failing to deactivate is non-fatal.
-        try? AVAudioSession.sharedInstance().setActive(false)
+        // Session lifecycle is managed by AudioSessionCoordinator; we do not
+        // deactivate here so background audio (e.g. the metronome) keeps playing.
     }
 
     // MARK: Buffer → samples helper

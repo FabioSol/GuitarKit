@@ -2,15 +2,19 @@
 //  TunerView.swift
 //  GuitarKit
 //
-//  The Tuner tab's top-level screen and the orchestrator for this slice. It
-//  decides, based on first-run state + mic permission, WHICH sub-screen to show:
+//  The Tuner tab's top-level screen. It decides, based on first-run state + mic
+//  permission, WHICH sub-screen to show:
 //
 //      first launch & undetermined  → MicPrimingView   (value screen → prompt)
-//      granted                      → live level meter  (audio flows!)
+//      granted                      → the tuner face    (audio flows!)
 //      denied                       → MicDeniedView     (recoverable, → Settings)
 //
-//  Later slices replace the "granted" content (the meter) with the real tuner
-//  hero, but the permission/lifecycle scaffolding here stays.
+//  THE AUDIO BRAIN LIVES ELSEWHERE: the engine/detector/tone/session and the
+//  tricky mode transitions (targeted ⇄ tone ⇄ chromatic) all live in
+//  `TunerCoordinator`, which is unit-tested in isolation. This view keeps only
+//  what's genuinely view-layer — permission (it picks the sub-screen), the shared
+//  instrument/tuning stores, the settings, and the sheets — and forwards events to
+//  the coordinator.
 //
 
 import SwiftUI
@@ -18,45 +22,14 @@ import SwiftUI
 struct TunerView: View {
 
     // MARK: Owned state
-    //
-    // `@State` for reference types uses the `@Observable` macro under the hood:
-    // SwiftUI keeps these alive for the view's lifetime and re-renders when
-    // their observed properties change. This view OWNS the permission model and
-    // the audio engine.
 
-    /// The microphone-permission model. Drives which sub-screen we show.
+    /// The audio brain: owns the engine, detector, tone generator, session, and
+    /// the targeted/tone/chromatic mode transitions.
+    @State private var coordinator = TunerCoordinator()
+
+    /// The microphone-permission model. Drives which sub-screen we show, so it
+    /// stays here in the view rather than in the coordinator.
     @State private var permission = MicrophonePermission()
-
-    /// The audio capture engine. Its `level` feeds the meter and its raw buffers
-    /// feed the pitch detector below.
-    @State private var engine = AudioInputEngine()
-
-    /// The pitch detector. We attach it to the engine's buffer stream so it sees
-    /// the same audio, then feed its readings into the tuning session below.
-    @State private var detector = MPMPitchDetector()
-
-    /// The targeted tuning session. Each detector reading is fed in, and it drives
-    /// the per-string in-tune logic the UI renders.
-    @State private var session = TuningSessionModel()
-
-    /// The tone generator (tap a peg in tone-mode to hear its target pitch) and
-    /// the session coordinator that flips record↔playback around it.
-    @State private var toneGenerator = ToneGenerator()
-    @State private var coordinator = AudioSessionCoordinator()
-
-    /// Whether the headstock is in tone-mode. In tone-mode detection is paused
-    /// (mic off, session → playback) and tapping a peg plays instead of locks.
-    @State private var isToneMode = false
-
-    /// The peg index we last asked the tone generator to play, so we can highlight
-    /// EXACTLY that peg in tone-mode even when two strings share a target frequency
-    /// (where matching by frequency would highlight the wrong one). Read via
-    /// `playingStringIndex`, which also gates on the generator still sounding.
-    @State private var tonePegIndex: Int?
-
-    /// Whether the hero is flipped to chromatic mode (names the nearest note for
-    /// any pitch, no string targets). Mic stays on; the session isn't fed.
-    @State private var isChromaticMode = false
 
     /// The picker's persistent memory (last-used instrument/tuning + usage counts)
     /// and the player's saved custom tunings. Both are SHARED stores the app shell
@@ -68,24 +41,17 @@ struct TunerView: View {
     @State private var ownedSelection = InstrumentSelectionStore()
     @State private var ownedCustomTunings = CustomTuningStore()
 
-    /// The stores actually in use: the shared injected ones in the app, or the
-    /// local fallbacks in previews.
     private var selection: InstrumentSelectionStore { injectedSelection ?? ownedSelection }
     private var customTunings: CustomTuningStore { injectedCustomTunings ?? ownedCustomTunings }
 
     #if DEBUG
-    /// The developer A/B knobs (visualization, in-tune threshold, smoothing) and
-    /// whether the "Tuner Lab" panel is showing. Slice #07 — the whole block is
-    /// `#if DEBUG`, so it and its UI are compiled out of release builds.
     @State private var devConfig = TunerDevConfig()
     @State private var showingDevPanel = false
     #endif
 
-    /// Which sheet (if any) is up. A single enum (rather than two Bools) lets the
-    /// picker swap straight to the custom editor without two sheets fighting.
+    /// Which sheet (if any) is up.
     @State private var activeSheet: TunerSheet?
 
-    /// The sheets the Tuner face can present.
     private enum TunerSheet: Identifiable {
         case picker
         case customEditor(strings: [Note])
@@ -97,36 +63,21 @@ struct TunerView: View {
         }
     }
 
-    /// Whether the user has already seen the first-run priming screen. We read
-    /// the persisted flag once into view state, then flip it when priming
-    /// completes. A plain `Bool` (not the struct) so SwiftUI re-renders on change.
     @State private var hasCompletedPriming = FirstRunFlag().hasCompletedPriming
 
-    /// `scenePhase` tells us when the app moves between active/inactive/background.
-    /// We watch it so that when the user returns from the Settings app (where
-    /// they may have just granted the mic) we re-check permission and start audio.
     @Environment(\.scenePhase) private var scenePhase
 
-    /// The global preferences, supplied by the app shell. Declared OPTIONAL so the
-    /// view still works in previews where no store is injected — we just fall back
-    /// to defaults. When present, reference pitch / sensitivity / haptics flow into
-    /// the tuning session.
     @Environment(SettingsStore.self) private var settings: SettingsStore?
 
     // MARK: Body
 
     var body: some View {
-        // Choose the sub-screen. `Group` lets us `switch`/`if` and still attach
-        // shared modifiers (`.onChange`, `.task`) to the whole thing.
         Group {
             if shouldShowPriming {
-                // FIRST RUN: explain value, then (on Start) request permission.
                 MicPrimingView(onStart: handleStartTapped)
             } else {
                 switch permission.state {
                 case .undetermined:
-                    // Returning user who somehow never decided (rare). Show the
-                    // priming screen's CTA path again rather than a blank meter.
                     MicPrimingView(onStart: handleStartTapped)
                 case .granted:
                     grantedContent
@@ -135,145 +86,94 @@ struct TunerView: View {
                 }
             }
         }
-        // When permission becomes granted, (re)start the engine; when it leaves
-        // granted, stop it. `.onChange(of:)` fires whenever the value changes.
         .onChange(of: permission.state) { _, newState in
-            syncEngine(to: newState)
+            coordinator.syncEngine(to: newState)
         }
-        // On first appearance, restore the last-used instrument/tuning, apply the
-        // user's settings, and (if a returning user) start capturing immediately.
         .task {
             restoreSelection()
             applySettings()
             #if DEBUG
-            // Seed the detector + session from the dev knobs' starting values
-            // (defaults match the shipping behavior, so this is a no-op unless
-            // the panel has already been touched).
             applyDevOverrides()
             #endif
-            if !shouldShowPriming {
-                syncEngine(to: permission.state)
-            }
+            coordinator.onAppear(permission: permission.state, isPriming: shouldShowPriming)
         }
-        // Live-apply settings changes: recalibration (reference pitch), in-tune
-        // sensitivity, and the haptics toggle all take effect immediately.
         .onChange(of: settings?.referencePitchHz) { _, _ in applySettings() }
         .onChange(of: settings?.inTuneSensitivity) { _, _ in applySettings() }
         .onChange(of: settings?.hapticsEnabled) { _, _ in applySettings() }
-        // Re-check permission when the app becomes active again (e.g. returning
-        // from Settings after flipping the mic toggle). `.onChange` of scenePhase
-        // is the standard place to react to foreground/background transitions.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 permission.refresh()
+                coordinator.onBecameActive(permission: permission.state, isPriming: shouldShowPriming)
             }
         }
     }
 
     // MARK: Sub-screens
 
-    /// What we show once the mic is granted: the targeted tuning session (which
-    /// string, how flat/sharp, latch-on-hold), with the input meter underneath
-    /// as a secondary "is sound getting in?" signal. The headstock hero replaces
-    /// the session body in slice #06; chromatic mode (#08) brings back the raw
-    /// note readout behind a toggle.
     private var grantedContent: some View {
         ZStack {
             backdrop
 
             VStack(spacing: 20) {
-                // The instrument/tuning selector pill (opens the picker), centered
-                // at the top of the face. Hidden in chromatic mode (no tuning).
-                // It clears the shell's top-right gear because it's horizontally
-                // centered, well away from the corner.
-                if !isChromaticMode {
+                if !coordinator.isChromaticMode {
                     InstrumentSelectorPill(
-                        instrumentName: session.currentInstrument.name,
-                        tuningName: session.currentTuning.name,
+                        instrumentName: coordinator.session.currentInstrument.name,
+                        tuningName: coordinator.session.currentTuning.name,
                         action: { activeSheet = .picker }
                     )
                 }
 
-                // The hero, flipped between targeted tuning (front) and the
-                // chromatic readout (back). The flip degrades to a cross-fade
-                // under Reduce Motion (handled inside HeroFlip).
-                HeroFlip(isFlipped: isChromaticMode) {
+                HeroFlip(isFlipped: coordinator.isChromaticMode) {
                     TunerHeroView(
-                        model: session,
-                        isToneMode: isToneMode,
-                        playingStringIndex: playingStringIndex,
-                        onTapPeg: handlePegTap
+                        model: coordinator.session,
+                        isToneMode: coordinator.isToneMode,
+                        playingStringIndex: coordinator.playingStringIndex,
+                        onTapPeg: coordinator.handlePegTap
                     )
                 } back: {
-                    ChromaticReadoutView(reading: detector.reading)
+                    ChromaticReadoutView(reading: coordinator.detector.reading)
                 }
 
-                // The face controls. In chromatic mode only the chromatic toggle
-                // shows (no strings → no capo/tone); otherwise capo + tone + flip.
                 HStack(spacing: 16) {
-                    if !isChromaticMode {
+                    if !coordinator.isChromaticMode {
                         CapoControlView(
-                            capo: session.capo,
-                            onIncrement: session.incrementCapo,
-                            onDecrement: session.decrementCapo,
-                            onReset: session.resetCapo
+                            capo: coordinator.session.capo,
+                            onIncrement: coordinator.session.incrementCapo,
+                            onDecrement: coordinator.session.decrementCapo,
+                            onReset: coordinator.session.resetCapo
                         )
                         toneModeToggle
                     }
                     chromaticModeToggle
                     #if DEBUG
-                    // Developer-only: open the "Tuner Lab" A/B panel. Compiled
-                    // out of release builds.
                     devPanelButton
                     #endif
                 }
 
-                // The level meter, a secondary "is sound getting in?" signal.
-                // Hidden in tone-mode (mic off); shown in chromatic (mic on).
-                if !isToneMode {
-                    InputLevelMeter(level: engine.level)
+                if !coordinator.isToneMode {
+                    InputLevelMeter(level: coordinator.engine.level)
                         .padding(.horizontal, 40)
                 }
             }
             .padding()
-            // Reserve room at the bottom so the level meter / controls clear the
-            // floating rotary nav.
             .padding(.bottom, 90)
         }
-        // Drive the session from the detector — but ONLY in targeted tuning mode.
-        // In tone-mode the mic is off; in chromatic mode the readout reads the raw
-        // detector reading directly and the session (targets/haptics) is bypassed.
-        .onChange(of: detector.reading) { _, reading in
-            guard !isToneMode, !isChromaticMode else { return }
-            session.ingest(reading)
+        .onChange(of: coordinator.detector.reading) { _, reading in
+            coordinator.handleDetectorReading(reading)
         }
-        // Entering/leaving tone-mode flips the audio path (see syncToneMode).
-        .onChange(of: isToneMode) { _, on in
-            syncToneMode(on)
-        }
-        // Chromatic mode needs live detection, so it can't coexist with tone-mode
-        // (which turns the mic off). Turning chromatic on forces tone-mode off.
-        .onChange(of: isChromaticMode) { _, on in
-            if on, isToneMode { isToneMode = false }
-        }
-        // The picker / custom-tuning editor (one sheet; the picker swaps to the
-        // editor in place when "Create custom" is tapped). On dismiss, restore the
-        // recording session in case the editor's tap-to-hear switched to playback.
-        .sheet(item: $activeSheet, onDismiss: { syncToneMode(false) }) { sheet in
+        .sheet(item: $activeSheet, onDismiss: { coordinator.onSheetDismiss(permission: permission.state) }) { sheet in
             switch sheet {
             case .picker:
                 InstrumentPickerView(
-                    selectedInstrument: session.currentInstrument,
-                    selectedTuning: session.currentTuning,
+                    selectedInstrument: coordinator.session.currentInstrument,
+                    selectedTuning: coordinator.session.currentTuning,
                     mostUsedInstrumentIDs: selection.mostUsedInstrumentIDs(limit: 3),
                     onSelect: { instrument, tuning in
-                        session.select(instrument: instrument, tuning: tuning)
+                        coordinator.session.select(instrument: instrument, tuning: tuning)
                         selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
                     },
                     onCreateCustom: {
-                        // Open the editor seeded from the current tuning. Swapping
-                        // the sheet item replaces the picker content in place.
-                        activeSheet = .customEditor(strings: session.currentTuning.strings)
+                        activeSheet = .customEditor(strings: coordinator.session.currentTuning.strings)
                     },
                     customTunings: { customTunings.tunings(forInstrumentID: $0.id) },
                     onDeleteCustom: { instrument, tuning in
@@ -283,24 +183,18 @@ struct TunerView: View {
             case .customEditor(let strings):
                 CustomTuningEditorView(
                     initialStrings: strings,
-                    instrument: session.currentInstrument,
+                    instrument: coordinator.session.currentInstrument,
                     onHear: handleHearNote,
-                    detectedNote: { detector.reading?.note },
+                    detectedNote: { coordinator.detector.reading?.note },
                     onSave: handleSaveCustomTuning
                 )
             }
         }
         .ignoresSafeArea()
         #if DEBUG
-        // The developer "Tuner Lab" sheet (slice #07). A second `.sheet` modifier
-        // is fine: only one sheet is ever presented at a time. Compiled out of
-        // release builds along with everything it touches.
         .sheet(isPresented: $showingDevPanel) {
             TunerDevPanelView(config: devConfig) { showingDevPanel = false }
         }
-        // Live-apply the dev knobs the instant they change so we can feel the
-        // difference while playing. (`visualization` is read straight into the
-        // hero, so it needs no handler here.)
         .onChange(of: devConfig.inTuneThresholdCents) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.smoothing) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.clarityThreshold) { _, _ in applyDevOverrides() }
@@ -312,158 +206,86 @@ struct TunerView: View {
         #endif
     }
 
-    /// The tone-mode toggle button (a speaker icon that fills when active).
     private var toneModeToggle: some View {
         Button {
-            isToneMode.toggle()
+            coordinator.setToneMode(!coordinator.isToneMode, permission: permission.state)
         } label: {
-            Image(systemName: isToneMode ? "speaker.wave.2.fill" : "speaker.wave.2")
+            Image(systemName: coordinator.isToneMode ? "speaker.wave.2.fill" : "speaker.wave.2")
                 .font(.footnote)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background {
-                    Capsule().fill(isToneMode
+                    Capsule().fill(coordinator.isToneMode
                         ? GKColor.accent.opacity(0.18)
                         : GKColor.textSecondary.opacity(0.12))
                 }
-                .foregroundStyle(isToneMode ? GKColor.accent : GKColor.textSecondary)
+                .foregroundStyle(coordinator.isToneMode ? GKColor.accent : GKColor.textSecondary)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isToneMode ? "Tone mode on" : "Tone mode off")
+        .accessibilityLabel(coordinator.isToneMode ? "Tone mode on" : "Tone mode off")
         .accessibilityHint("Tap a peg to hear its pitch")
     }
 
-    /// The chromatic-mode toggle (a tuning fork that fills when active). Flips the
-    /// hero to name the nearest note for any pitch.
     private var chromaticModeToggle: some View {
         Button {
-            isChromaticMode.toggle()
+            coordinator.setChromatic(!coordinator.isChromaticMode, permission: permission.state)
         } label: {
             Image(systemName: "tuningfork")
                 .font(.footnote)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background {
-                    Capsule().fill(isChromaticMode
+                    Capsule().fill(coordinator.isChromaticMode
                         ? GKColor.accent.opacity(0.18)
                         : GKColor.textSecondary.opacity(0.12))
                 }
-                .foregroundStyle(isChromaticMode ? GKColor.accent : GKColor.textSecondary)
+                .foregroundStyle(coordinator.isChromaticMode ? GKColor.accent : GKColor.textSecondary)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isChromaticMode ? "Chromatic mode on" : "Chromatic mode off")
+        .accessibilityLabel(coordinator.isChromaticMode ? "Chromatic mode on" : "Chromatic mode off")
         .accessibilityHint("Names the nearest note for any pitch")
     }
 
     // MARK: Logic
 
-    /// Show the priming screen only on a genuine first run that hasn't decided
-    /// yet. (If a returning user previously granted/denied, skip straight to the
-    /// relevant state even if the flag somehow wasn't set.)
     private var shouldShowPriming: Bool {
         !hasCompletedPriming && permission.state == .undetermined
     }
 
-    /// User tapped "Start tuning" on the priming screen. Mark priming done
-    /// (so it never shows again) and fire the OS permission prompt.
     private func handleStartTapped() {
-        // Persist that we've shown priming, and reflect it in view state so the
-        // priming screen won't reappear after the prompt resolves.
         let flag = FirstRunFlag()
         flag.markPrimingComplete()
         hasCompletedPriming = true
-
-        // Request permission. `Task { ... }` launches the async work; when it
-        // finishes, `permission.state` updates and `.onChange` starts the engine
-        // if we were granted.
         Task {
             await permission.request()
         }
     }
 
-    /// Restore the player's last-used instrument + tuning (persisted on-device),
-    /// so the Tuner reopens where they left off instead of cold-starting on guitar.
     private func restoreSelection() {
         let instrument = selection.restoredInstrument()
-        // Resolve against this instrument's saved customs too, so a custom tuning
-        // (e.g. DADGAD) the player was last on is restored on relaunch — not just
-        // the built-in presets.
         let customs = customTunings.tunings(forInstrumentID: instrument.id)
-        session.select(
+        coordinator.session.select(
             instrument: instrument,
             tuning: selection.restoredTuning(for: instrument, customTunings: customs)
         )
     }
 
-    /// Route a peg tap: in tone-mode play that string's target pitch; otherwise
-    /// lock onto it for tuning.
-    private func handlePegTap(_ index: Int) {
-        guard session.targets.indices.contains(index) else { return }
-        if isToneMode {
-            tonePegIndex = index
-            toneGenerator.play(frequencyHz: session.targets[index].frequencyHz)
-        } else {
-            session.lock(toStringIndex: index)
-        }
-    }
-
-    /// Which peg is currently sounding, for the tone-mode headstock highlight.
-    ///
-    /// We remember the EXACT peg index we asked the generator to play (`tonePegIndex`)
-    /// rather than reverse-matching the generator's frequency back to a target.
-    /// Frequency-matching highlighted the wrong peg whenever two strings share a
-    /// target pitch (some alternate/custom tunings, or capo collisions) — `firstIndex`
-    /// would always pick the first of the duplicates. The remembered index is the
-    /// unambiguous source of truth; we still gate on the generator actually playing
-    /// so the highlight clears when the tone ends.
-    private var playingStringIndex: Int? {
-        guard toneGenerator.currentFrequencyHz != nil else { return nil }
-        guard let index = tonePegIndex, session.targets.indices.contains(index) else { return nil }
-        return index
-    }
-
-    /// Flip the audio path when tone-mode toggles. Entering: stop the mic +
-    /// detection and switch the session to playback so tones are audible (even on
-    /// the silent switch). Leaving: stop the tone and resume detection (the mic
-    /// engine re-asserts the record session itself on start).
-    private func syncToneMode(_ on: Bool) {
-        if on {
-            engine.stop()
-            detector.reset()
-            do {
-                try coordinator.configureForPlayback()
-            } catch {
-                print("AudioSession playback configuration failed: \(error)")
-            }
-        } else {
-            toneGenerator.shutdown()
-            syncEngine(to: permission.state)
-        }
-    }
-
-    /// Editor tap-to-hear: switch to playback and sound the note. The sheet's
-    /// onDismiss restores the recording session afterwards.
     private func handleHearNote(_ note: Note) {
-        try? coordinator.configureForPlayback()
         let hz = settings?.referencePitchHz ?? ReferencePitch.standard.hertz
         let calculator = PitchCalculator(referenceA: ReferencePitch(hertz: hz))
-        toneGenerator.play(frequencyHz: calculator.frequency(of: note))
+        coordinator.playHearNote(frequencyHz: calculator.frequency(of: note))
     }
 
-    /// Editor save: persist the custom tuning, then switch the tuner to it.
     private func handleSaveCustomTuning(_ tuning: Tuning) {
-        let instrument = session.currentInstrument
+        let instrument = coordinator.session.currentInstrument
         customTunings.save(tuning, forInstrumentID: instrument.id)
-        session.select(instrument: instrument, tuning: tuning)
+        coordinator.session.select(instrument: instrument, tuning: tuning)
         selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
     }
 
-    /// Push the user's global preferences into the tuning session: A4 reference
-    /// pitch, the in-tune sensitivity window, and the haptics toggle. No-op when
-    /// no store is injected (e.g. previews) — the session keeps its defaults.
     private func applySettings() {
         guard let settings else { return }
-        session.reconfigure(
+        coordinator.session.reconfigure(
             referencePitch: ReferencePitch(hertz: settings.referencePitchHz),
             tolerance: TuningTolerance(
                 inTuneCents: settings.inTuneSensitivity.centsTolerance,
@@ -471,35 +293,7 @@ struct TunerView: View {
                 holdDuration: 0.7
             )
         )
-        session.hapticsEnabled = settings.hapticsEnabled
-    }
-
-    /// Start or stop the audio engine to match the permission state.
-    private func syncEngine(to state: MicPermissionState) {
-        switch state {
-        case .granted:
-            // Subscribe the detector to the engine's buffers BEFORE starting, so
-            // it's wired up the moment audio begins flowing. Re-attaching is
-            // harmless (it just re-sets the single buffer handler).
-            detector.attach(to: engine)
-            do {
-                try engine.start()
-            } catch {
-                // Starting can fail if another app holds the mic. We don't crash;
-                // the readout simply stays idle. A future slice can surface a
-                // gentle error; for this slice silence is acceptable.
-                print("AudioInputEngine failed to start: \(error)")
-            }
-        case .denied, .undetermined:
-            engine.stop()
-            // Clear any lingering reading + session state so nothing stale hangs
-            // on screen and a fresh session starts clean next time. Also tear down
-            // the tone generator + release the audio session.
-            detector.reset()
-            session.reset()
-            toneGenerator.shutdown()
-            coordinator.deactivate()
-        }
+        coordinator.session.hapticsEnabled = settings.hapticsEnabled
     }
 
     private var backdrop: some View {
@@ -511,7 +305,6 @@ struct TunerView: View {
     }
 
     #if DEBUG
-    /// The developer "Tuner Lab" button (a flask) that opens the A/B panel.
     private var devPanelButton: some View {
         Button {
             showingDevPanel = true
@@ -527,12 +320,9 @@ struct TunerView: View {
         .accessibilityLabel("Tuner Lab (developer)")
     }
 
-    /// Push the dev knobs into the live pipeline: the in-tune threshold into the
-    /// session's tolerance, and the smoothing factor into the detector. Uses the
-    /// current reference pitch so we don't disturb the user's A4 calibration.
     private func applyDevOverrides() {
         let hz = settings?.referencePitchHz ?? ReferencePitch.standard.hertz
-        session.reconfigure(
+        coordinator.session.reconfigure(
             referencePitch: ReferencePitch(hertz: hz),
             tolerance: TuningTolerance(
                 inTuneCents: devConfig.inTuneThresholdCents,
@@ -540,13 +330,14 @@ struct TunerView: View {
                 holdDuration: 0.7
             )
         )
-        detector.setSmoothing(emaFactor: Float(devConfig.smoothing))
-        detector.setClarityThreshold(Float(devConfig.clarityThreshold))
-        detector.setLevelGate(dB: Float(devConfig.levelGateDB))
-        detector.setAlgorithm(devConfig.algorithm)
-        detector.setPreprocessing(enabled: devConfig.preprocessEnabled)
-        detector.setPreprocessorCutoffs(highPassHz: devConfig.preprocessHighPassHz,
-                                        lowPassHz: devConfig.preprocessLowPassHz)
+        guard let mpm = coordinator.detector as? MPMPitchDetector else { return }
+        mpm.setSmoothing(emaFactor: Float(devConfig.smoothing))
+        mpm.setClarityThreshold(Float(devConfig.clarityThreshold))
+        mpm.setLevelGate(dB: Float(devConfig.levelGateDB))
+        mpm.setAlgorithm(devConfig.algorithm)
+        mpm.setPreprocessing(enabled: devConfig.preprocessEnabled)
+        mpm.setPreprocessorCutoffs(highPassHz: devConfig.preprocessHighPassHz,
+                                   lowPassHz: devConfig.preprocessLowPassHz)
     }
     #endif
 }

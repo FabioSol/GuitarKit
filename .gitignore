@@ -4,3 +4,9 @@
 
 # Generated design-review snapshots
 .snapshots/
+
+# Xcode — per-user settings (breakpoints, scheme visibility, window state).
+# The project file itself (project.pbxproj, shared schemes) IS committed.
+xcuserdata/
+*.xcuserstate
+.DS_Store

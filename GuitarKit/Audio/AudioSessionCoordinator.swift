@@ -26,6 +26,17 @@
 
 import AVFoundation
 
+/// The audio-session seam: switch the shared session between record and playback,
+/// or release it. Behind a protocol so the `TunerCoordinator` can be unit-tested
+/// with a fake that just records which configuration was requested — no real
+/// `AVAudioSession`.
+@MainActor
+protocol AudioSessionConfiguring: AnyObject {
+    func configureForRecording() throws
+    func configureForPlayback() throws
+    func deactivate()
+}
+
 /// Owns `AVAudioSession` category/mode switching for the Tuner.
 ///
 /// `@MainActor` because session changes are driven by UI events (entering the
@@ -34,7 +45,7 @@ import AVFoundation
 /// shared session. A `final class` (reference type) because it represents one
 /// shared piece of system state — value-copy semantics would be wrong.
 @MainActor
-final class AudioSessionCoordinator {
+final class AudioSessionCoordinator: AudioSessionConfiguring {
 
     /// The process-wide shared session every app talks to. Stored once so each
     /// method reads clearly. `private` — callers go through our methods.
@@ -49,15 +60,19 @@ final class AudioSessionCoordinator {
     /// The orchestrator calls this when the Tuner is detecting pitch, and again
     /// after a tone finishes (to hand the mic back). The category/mode here match
     /// exactly what `AudioInputEngine.start()` expects:
-    ///   • `.record`       — we capture input.
-    ///   • `.measurement`  — disables most of the OS's automatic gain/EQ so the
-    ///                       detector sees a clean signal (a tuner wants raw).
-    ///   • `.duckOthers`   — politely lowers other apps' audio if any.
+    ///   • `.playAndRecord` — we capture input AND can produce output simultaneously,
+    ///                        so background audio (e.g. the metronome) keeps playing
+    ///                        while the tuner listens.
+    ///   • `.measurement`   — disables most of the OS's automatic gain/EQ so the
+    ///                        detector sees a clean signal (a tuner wants raw).
+    ///   • `.defaultToSpeaker` — routes output to the speaker, not the earpiece.
+    ///   • `.duckOthers`    — politely lowers other apps' audio if any.
     ///
     /// - Throws: if the OS refuses the category change (e.g. another app holds
     ///   the mic). The caller decides how to surface that.
     func configureForRecording() throws {
-        try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
+        try session.setCategory(.playAndRecord, mode: .measurement,
+                                options: [.defaultToSpeaker, .duckOthers])
         try session.setActive(true)
     }
 
