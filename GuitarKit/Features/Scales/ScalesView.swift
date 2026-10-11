@@ -2,53 +2,144 @@
 //  ScalesView.swift
 //  GuitarKit — Scales tool
 //
-//  The Scales tool screen: pick a root + scale/mode and the notes light up across
-//  a horizontal neck (root emphasized), playable ascending/descending, with a
-//  handedness mirror, an orientation flip, a note-names/degrees label toggle, and
-//  the `Current ⇄ Standard` override. Built on the pure `Fretboard` engine, so
-//  the highlighting is correct for any tuning + capo.
+//  The app is portrait-locked. ScalesView detects the physical device orientation
+//  via UIDevice notifications and fake-rotates only its own content 90° when the
+//  device is held in landscape. Everything outside (nav bar, other tools) stays
+//  portrait-locked as normal.
+//
+//  Portrait: scrollable fretboard + all three display toggles.
+//  Landscape (fake-rotated): full 12-fret diagram that fills the width, play
+//  controls + notes/degrees picker. Left-handed / flip / standard-tuning toggles
+//  are omitted in landscape.
+//
+//  System picker popups (.menu style) appear in portrait coordinates and would
+//  look rotated in fake-landscape, so landscape uses stepper-style (‹ value ›)
+//  selectors that stay entirely within the rotated SwiftUI tree.
 //
 
 import SwiftUI
+import UIKit
 
 struct ScalesView: View {
 
-    /// The Scales state. INJECTED by `RootView` (which owns it via `@State`)
-    /// rather than owned here, so the tool's selection survives navigating away
-    /// and back — and so the Circle-of-Fifths "View scale" cross-link can load a
-    /// scale into it before we appear (slice #21). `@Bindable` gives us the
-    /// two-way `$model.…` bindings the pickers/toggles need from an object we
-    /// don't own.
     @Bindable var model: ScalesViewModel
+
+    @State private var deviceOrientation: UIDeviceOrientation = .portrait
+
+    private var isLandscape: Bool { deviceOrientation.isLandscape }
+
+    // +90° for landscapeLeft (home button right, device tilted CCW)
+    // −90° for landscapeRight (home button left, device tilted CW)
+    private var rotationAngle: Double {
+        deviceOrientation == .landscapeLeft ? 90 : -90
+    }
+
+    // MARK: - UIKit screen metrics
+
+    // The GeometryReader approach is dropped for landscape because .ignoresSafeArea()
+    // on the outer reader makes geo.safeAreaInsets return zero. UIKit gives correct
+    // values reliably.
+    private var windowSafeAreaInsets: UIEdgeInsets {
+        guard let windowScene = UIApplication.shared.connectedScenes
+                .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let window = windowScene.windows.first(where: { $0.isKeyWindow })
+        else { return UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0) }
+        return window.safeAreaInsets
+    }
+
+    private var screenSize: CGSize {
+        guard let windowScene = UIApplication.shared.connectedScenes
+                .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
+        else { return CGSize(width: 393, height: 852) }
+        return windowScene.screen.bounds.size
+    }
+
+    // MARK: - Body
 
     var body: some View {
         ZStack {
             GKColor.background.ignoresSafeArea()
-
-            // A ScrollView so the fretboard + controls fit on small iPhones and
-            // the tool behaves like the Chords / Metronome / Circle screens. The
-            // content scrolls under the floating nav.
-            ScrollView {
-                VStack(spacing: 18) {
-                    Text("Scales")
-                        .font(GKFont.largeTitle)
-                        .foregroundStyle(GKColor.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    selectors
-                    fretboard
-                    playControls
-                    toggles
-                }
-                .padding()
-                // Reserve room at the bottom so the toggles clear the floating
-                // rotary nav.
-                .padding(.bottom, 96)
+            if isLandscape {
+                landscapeContentView
+                    .transition(.opacity)
+            } else {
+                portraitLayout
+                    .transition(.opacity)
             }
+        }
+        .animation(.easeInOut(duration: 0.25), value: isLandscape)
+        .onAppear {
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            refreshOrientation()
+        }
+        .onDisappear {
+            UIDevice.current.endGeneratingDeviceOrientationNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            refreshOrientation()
         }
     }
 
-    // MARK: - Root + scale selectors
+    private func refreshOrientation() {
+        let o = UIDevice.current.orientation
+        guard o.isLandscape || o.isPortrait else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            deviceOrientation = o
+        }
+    }
+
+    // MARK: - Landscape rotation wrapper
+
+    private var landscapeContentView: some View {
+        let size = screenSize
+        let leadingPad: CGFloat  = 85
+        let trailingPad: CGFloat = 85
+
+        return landscapeLayout
+            .padding(.leading, leadingPad)
+            .padding(.trailing, trailingPad)
+            .padding(.vertical, 8)
+            .frame(width: size.height, height: size.width)
+            .rotationEffect(.degrees(rotationAngle))
+            .frame(width: size.width, height: size.height)
+    }
+
+    // MARK: - Portrait layout (unchanged)
+
+    private var portraitLayout: some View {
+        VStack(spacing: 18) {
+            Text("Scales")
+                .font(GKFont.largeTitle)
+                .foregroundStyle(GKColor.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            selectors
+            portraitFretboard
+            playControls
+            portraitToggles
+        }
+        .padding()
+        .padding(.bottom, 96)
+    }
+
+    // MARK: - Landscape layout
+
+    private var landscapeLayout: some View {
+        VStack(spacing: 10) {
+            Text("Scales")
+                .font(GKFont.title)
+                .foregroundStyle(GKColor.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            landscapeSelectors
+            landscapeFretboard
+            landscapeBottomBar
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Portrait selectors (Picker popups — portrait only)
 
     private var selectors: some View {
         HStack(spacing: 12) {
@@ -67,58 +158,125 @@ struct ScalesView: View {
         .tint(GKColor.accent)
     }
 
-    // MARK: - The fretboard grid
+    // MARK: - Landscape selectors (inline stepper — no system popups)
 
-    private var fretboard: some View {
-        // Strings top→bottom and frets left→right, honoring orientation + handedness.
-        let strings = stringDisplayOrder()
-        let frets = fretDisplayOrder()
+    // System popups render in portrait coordinates and appear sideways in
+    // fake-landscape, so landscape uses ‹ value › buttons that stay within the
+    // rotated SwiftUI layer.
+    private var landscapeSelectors: some View {
+        HStack(spacing: 16) {
+            stepperControl(
+                label: model.root.name,
+                minWidth: 28,
+                prev: { model.root = cycled(PitchClass.allCases, before: model.root) },
+                next: { model.root = cycled(PitchClass.allCases, after: model.root) }
+            )
+            stepperControl(
+                label: scaleName(model.scaleType),
+                minWidth: 120,
+                prev: { model.scaleType = cycled(ScaleType.allCases, before: model.scaleType) },
+                next: { model.scaleType = cycled(ScaleType.allCases, after: model.scaleType) }
+            )
+        }
+    }
 
-        // Build the scale projection ONCE per render and hand it to every cell,
-        // instead of each of the ~78 cells rebuilding the board + scale.
-        let fs = model.fretboardScale
+    private func stepperControl(label: String, minWidth: CGFloat,
+                                prev: @escaping () -> Void,
+                                next: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Button(action: prev) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GKColor.accent)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+
+            Text(label)
+                .font(GKFont.body)
+                .foregroundStyle(GKColor.textPrimary)
+                .lineLimit(1)
+                .frame(minWidth: minWidth, alignment: .center)
+
+            Button(action: next) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GKColor.accent)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(GKColor.textSecondary.opacity(0.1))
+        )
+    }
+
+    // MARK: - Fretboard (portrait — horizontal scroll)
+
+    private var portraitFretboard: some View {
+        let strings = stringRows(flipped: model.orientationFlipped)
+        let frets   = fretColumns(leftHanded: model.isLeftHanded)
+        let fs      = model.fretboardScale
 
         return ScrollView(.horizontal, showsIndicators: false) {
-            VStack(spacing: 6) {
-                ForEach(strings, id: \.self) { string in
-                    HStack(spacing: 6) {
-                        ForEach(frets, id: \.self) { fret in
-                            cell(string: string, fret: fret, fs: fs)
-                        }
-                    }
+            fretGrid(strings: strings, frets: frets, fs: fs, cellW: 38, cellH: 34)
+                .padding(.vertical, 8)
+                .padding(model.isLeftHanded ? .trailing : .leading, 12)
+                .overlay(alignment: model.isLeftHanded ? .trailing : .leading) {
+                    nutBar
                 }
+        }
+    }
 
-                // Fret-number axis under the grid: "0" (the open/nut position) is
-                // emphasized, then 1, 2, 3… up the neck — so it's always obvious
-                // which way the neck runs and where the head is.
-                HStack(spacing: 6) {
+    // MARK: - Fretboard (landscape — fills width, no scroll)
+
+    private var landscapeFretboard: some View {
+        let strings = stringRows(flipped: false)
+        let frets   = fretColumns(leftHanded: false)
+        let fs      = model.fretboardScale
+
+        return GeometryReader { geo in
+            let gap: CGFloat = 4
+            let nutPad: CGFloat = 10
+            let cellW = (geo.size.width - nutPad - gap * CGFloat(frets.count - 1)) / CGFloat(frets.count)
+            let cellH: CGFloat = max(24, (geo.size.height - 22 - gap * CGFloat(strings.count - 1)) / CGFloat(strings.count + 1))
+
+            fretGrid(strings: strings, frets: frets, fs: fs, cellW: cellW, cellH: cellH)
+                .padding(.leading, nutPad)
+                .overlay(alignment: .leading) { nutBar }
+        }
+    }
+
+    // MARK: - Shared grid
+
+    private func fretGrid(strings: [Int], frets: [Int], fs: FretboardScale,
+                          cellW: CGFloat, cellH: CGFloat) -> some View {
+        let gap: CGFloat = 4
+        return VStack(spacing: gap) {
+            ForEach(strings, id: \.self) { string in
+                HStack(spacing: gap) {
                     ForEach(frets, id: \.self) { fret in
-                        Text("\(fret)")
-                            .font(.system(size: 11,
-                                          weight: fret == 0 ? .bold : .regular,
-                                          design: .rounded))
-                            .foregroundStyle(fret == 0 ? GKColor.accent : GKColor.textSecondary)
-                            .frame(width: 38)
+                        cell(string: string, fret: fret, fs: fs, w: cellW, h: cellH)
                     }
                 }
             }
-            .padding(.vertical, 8)
-            // Leave a gap on the head side for the nut bar so it sits BESIDE the
-            // open column rather than on top of it.
-            .padding(model.isLeftHanded ? .trailing : .leading, 12)
-            // The NUT / head marker: a thick bar at the head end of the neck
-            // (the side fret 0 sits on), so the diagram is never ambiguous about
-            // which end is the head. It moves to the right for a left-handed
-            // mirror (where the fret columns are reversed).
-            .overlay(alignment: model.isLeftHanded ? .trailing : .leading) {
-                nutMarker
+            HStack(spacing: gap) {
+                ForEach(frets, id: \.self) { fret in
+                    Text("\(fret)")
+                        .font(.system(size: min(11, cellW * 0.45),
+                                      weight: fret == 0 ? .bold : .regular,
+                                      design: .rounded))
+                        .foregroundStyle(fret == 0 ? GKColor.accent : GKColor.textSecondary)
+                        .frame(width: cellW)
+                }
             }
         }
     }
 
-    /// A thick rounded bar marking the NUT — the head end of the neck. Sits in the
-    /// gap just outside the open-string (fret 0) column.
-    private var nutMarker: some View {
+    private var nutBar: some View {
         RoundedRectangle(cornerRadius: 2)
             .fill(GKColor.textPrimary.opacity(0.65))
             .frame(width: 5)
@@ -126,87 +284,100 @@ struct ScalesView: View {
             .accessibilityHidden(true)
     }
 
-    private func cell(string: Int, fret: Int, fs: FretboardScale) -> some View {
+    private func cell(string: Int, fret: Int, fs: FretboardScale,
+                      w: CGFloat, h: CGFloat) -> some View {
         let inScale = fs.isInScale(string: string, fret: fret)
-        let isRoot = fs.isRoot(string: string, fret: fret)
-        let label = inScale ? model.label(string: string, fret: fret, in: fs) : nil
+        let isRoot  = fs.isRoot(string: string, fret: fret)
+        let label   = inScale ? model.label(string: string, fret: fret, in: fs) : nil
+        let dot     = min(w, h) * 0.8
 
         return ZStack {
-            // A faint fret cell background so the grid reads even where empty.
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 5)
                 .fill(GKColor.textSecondary.opacity(fret == 0 ? 0.18 : 0.06))
-
             if inScale {
                 Circle()
                     .fill(isRoot ? GKColor.accent : GKColor.inTune.opacity(0.7))
-                    .frame(width: 30, height: 30)
+                    .frame(width: dot, height: dot)
                 if let label {
                     Text(label)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(.system(size: max(7, dot * 0.38),
+                                      weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
                 }
             }
         }
-        .frame(width: 38, height: 34)
+        .frame(width: w, height: h)
         .accessibilityHidden(!inScale)
         .accessibilityLabel(label ?? "")
     }
 
-    // MARK: - Play controls
+    // MARK: - Play controls (shared)
 
     private var playControls: some View {
         HStack(spacing: 16) {
-            Button { model.playAscending() } label: {
-                Label("Ascending", systemImage: "arrow.up")
-            }
-            Button { model.playDescending() } label: {
-                Label("Descending", systemImage: "arrow.down")
-            }
-            Button { model.stopPlayback() } label: {
-                Image(systemName: "stop.fill")
-            }
+            Button { model.playAscending()  } label: { Label("Ascending",  systemImage: "arrow.up")   }
+            Button { model.playDescending() } label: { Label("Descending", systemImage: "arrow.down") }
+            Button { model.stopPlayback()   } label: { Image(systemName: "stop.fill") }
         }
         .font(GKFont.body)
         .tint(GKColor.accent)
     }
 
-    // MARK: - Toggles
+    // MARK: - Landscape bottom bar (play + notes/degrees)
 
-    private var toggles: some View {
+    private var landscapeBottomBar: some View {
+        HStack {
+            playControls
+            Spacer()
+            GKSegmentedPicker(
+                options: [(.noteNames, "Notes"), (.degrees, "Degrees")],
+                selection: $model.labelMode
+            )
+            .frame(width: 150)
+        }
+    }
+
+    // MARK: - Portrait toggles
+
+    private var portraitToggles: some View {
         VStack(spacing: 10) {
-            Picker("Labels", selection: $model.labelMode) {
-                Text("Notes").tag(ScalesViewModel.LabelMode.noteNames)
-                Text("Degrees").tag(ScalesViewModel.LabelMode.degrees)
-            }
-            .pickerStyle(.segmented)
-
-            Toggle("Left-handed", isOn: $model.isLeftHanded)
+            GKSegmentedPicker(
+                options: [(.noteNames, "Notes"), (.degrees, "Degrees")],
+                selection: $model.labelMode
+            )
+            Toggle("Left-handed",      isOn: $model.isLeftHanded)
             Toggle("Flip orientation", isOn: $model.orientationFlipped)
-            Toggle("Standard tuning", isOn: $model.useStandardOverride)
+            Toggle("Standard tuning",  isOn: $model.useStandardOverride)
         }
         .font(GKFont.body)
-        .tint(GKColor.accent)
+        .toggleStyle(GKToggleStyle())
+    }
+
+    // MARK: - Cyclic value helpers
+
+    private func cycled<T: Equatable>(_ all: [T], after current: T) -> T {
+        guard let idx = all.firstIndex(of: current) else { return current }
+        return all[(idx + 1) % all.count]
+    }
+
+    private func cycled<T: Equatable>(_ all: [T], before current: T) -> T {
+        guard let idx = all.firstIndex(of: current) else { return current }
+        return all[(idx - 1 + all.count) % all.count]
     }
 
     // MARK: - Display ordering
 
-    /// String row order (top → bottom). By default the HIGH string is on top (tab
-    /// orientation); the orientation flip reverses it.
-    private func stringDisplayOrder() -> [Int] {
-        let base = Array(0..<model.fretboard.stringCount)   // low → high
-        // High on top = reversed; flip toggles that.
-        let highOnTop = base.reversed()
-        return model.orientationFlipped ? Array(base) : Array(highOnTop)
+    private func stringRows(flipped: Bool) -> [Int] {
+        let base = Array(0..<model.fretboard.stringCount)
+        return flipped ? base : base.reversed()
     }
 
-    /// Fret column order (left → right). Nut on the left by default; left-handed
-    /// mirrors so the nut is on the right.
-    private func fretDisplayOrder() -> [Int] {
+    private func fretColumns(leftHanded: Bool) -> [Int] {
         let base = Array(0...model.fretCount)
-        return model.isLeftHanded ? base.reversed() : base
+        return leftHanded ? base.reversed() : base
     }
 
-    // MARK: - Names
+    // MARK: - Scale names
 
     private func scaleName(_ type: ScaleType) -> String {
         switch type {

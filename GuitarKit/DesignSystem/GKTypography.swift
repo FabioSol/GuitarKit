@@ -19,18 +19,6 @@ import SwiftUI
 // Callers write `GKFont.heroNote` etc.
 enum GKFont {
 
-    // MARK: - Hero
-
-    /// The giant single-letter note name in the tuner ("E", "A", ...).
-    /// Uses SF Pro *Rounded* for a friendly, display feel.
-    ///
-    /// `.system(size:weight:design:)` builds a font from the system family.
-    /// `design: .rounded` selects SF Pro Rounded. We pick an explicit large
-    /// size here because this is a deliberate display element; for body text
-    /// below we instead start from semantic text styles so Dynamic Type scales
-    /// them automatically.
-    static let heroNote = Font.system(size: 96, weight: .bold, design: .rounded)
-
     // MARK: - Headings & body
     //
     // These start from SwiftUI's *semantic* text styles (`.largeTitle`,
@@ -62,6 +50,33 @@ enum GKFont {
     /// at a glance in a fixed-design style.
     static let liveNumeric = Font.system(.title3, design: .rounded)
         .monospacedDigit()
+}
+
+// MARK: - Hero note font (Dynamic-Type aware)
+
+extension View {
+    /// Apply the giant single-letter note font — the tuner "hero" glyph ("E",
+    /// "A", …). SF Pro *Rounded*, bold, for a friendly display feel.
+    ///
+    /// Unlike a fixed point size, this SCALES with the user's Dynamic Type setting
+    /// (via `@ScaledMetric`), so the single most important element on screen grows
+    /// for people who need larger text instead of staying locked at 96 pt. We use
+    /// a modifier (not a `static Font`) because `@ScaledMetric` reads the
+    /// environment, which only a `View`/`ViewModifier` can do.
+    func heroNoteFont() -> some View {
+        modifier(HeroNoteFont())
+    }
+}
+
+/// The hero-note font as a modifier so it can scale with Dynamic Type. Anchored
+/// to `.largeTitle` so it tracks the same curve as the system's biggest style.
+private struct HeroNoteFont: ViewModifier {
+    /// 96 pt at the default text size; grows/shrinks with Dynamic Type.
+    @ScaledMetric(relativeTo: .largeTitle) private var size: CGFloat = 96
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size, weight: .bold, design: .rounded))
+    }
 }
 
 // MARK: - Tabular figures helper

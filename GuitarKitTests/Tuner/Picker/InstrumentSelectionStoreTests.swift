@@ -25,7 +25,8 @@ final class InstrumentSelectionStoreTests: XCTestCase {
     /// A throwaway defaults store unique to this test case. A named suite is a
     /// separate plist from `.standard`, so it's safe to wipe between tests.
     private var defaults: UserDefaults!
-    private let suiteName = "guitarkit.tests.picker"
+    // Per-test-instance UUID so suites never collide under parallel execution.
+    private let suiteName = "guitarkit.tests.picker.\(UUID().uuidString)"
 
     override func setUp() {
         super.setUp()

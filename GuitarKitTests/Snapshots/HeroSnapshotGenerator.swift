@@ -15,6 +15,17 @@ import SwiftUI
 @MainActor
 final class HeroSnapshotGenerator: XCTestCase {
 
+    /// This is a DEVELOPER TOOL, not a behavioral test: it writes PNGs into
+    /// `<repo>/.snapshots/` as a side effect. We don't want it running on every
+    /// normal/CI test pass (it's slow and produces files), so each method opts out
+    /// unless `GENERATE_SNAPSHOTS=1` is set in the environment. Run it on demand with
+    /// `GENERATE_SNAPSHOTS=1 xcodebuild test … -only-testing:GuitarKitTests/HeroSnapshotGenerator`.
+    private func skipUnlessSnapshotRunRequested() throws {
+        guard ProcessInfo.processInfo.environment["GENERATE_SNAPSHOTS"] == "1" else {
+            throw XCTSkip("Set GENERATE_SNAPSHOTS=1 to regenerate design snapshots.")
+        }
+    }
+
     /// A silent stand-in so rendering never tries to buzz the (non-existent)
     /// Taptic Engine.
     private final class SilentHaptics: TuningHapticsProviding {
@@ -48,6 +59,7 @@ final class HeroSnapshotGenerator: XCTestCase {
     }
 
     func test_generateHeroStatesImage() throws {
+        try skipUnlessSnapshotRunRequested()
         // STATE 1 — idle (nothing played yet).
         let (idle, _) = makeModel()
 
@@ -123,6 +135,7 @@ final class HeroSnapshotGenerator: XCTestCase {
     /// that per-instrument peg layouts (incl. the banjo 5th peg and violin 2+2
     /// pegbox) load from their JSONs and place correctly.
     func test_generateInstrumentHeadsImage() throws {
+        try skipUnlessSnapshotRunRequested()
         func model(_ instrument: Instrument) -> TuningSessionModel {
             let m = TuningSessionModel(haptics: SilentHaptics())
             m.select(instrument: instrument)

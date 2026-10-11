@@ -20,9 +20,11 @@ import XCTest
 final class SettingsStoreTests: XCTestCase {
 
     /// A throwaway defaults store unique to this test case. A named suite is a
-    /// separate plist from `.standard`, so it's safe to wipe.
+    /// separate plist from `.standard`, so it's safe to wipe. The name carries a
+    /// per-test-instance UUID so suites never collide if XCTest runs cases in
+    /// PARALLEL (a fixed name would let two cases stomp each other's plist).
     private var defaults: UserDefaults!
-    private let suiteName = "guitarkit.tests.settings"
+    private let suiteName = "guitarkit.tests.settings.\(UUID().uuidString)"
 
     override func setUp() {
         super.setUp()
@@ -169,5 +171,77 @@ final class SettingsStoreTests: XCTestCase {
         let second = SettingsStore(defaults: defaults)
         XCTAssertTrue(second.hapticsEnabled)
         XCTAssertEqual(second.theme, .dark)
+    }
+
+    // MARK: - Metronome group (round-trip + reset)
+
+    func test_metronomeSettings_persistAndReset() {
+        let first = SettingsStore(defaults: defaults)
+        // Defaults first.
+        XCTAssertEqual(first.metronomeSoundSet, .classic)
+        XCTAssertFalse(first.metronomeHapticsEnabled)
+
+        first.metronomeSoundSet = .wood
+        first.metronomeHapticsEnabled = true
+
+        // Round-trip across a relaunch.
+        let second = SettingsStore(defaults: defaults)
+        XCTAssertEqual(second.metronomeSoundSet, .wood)
+        XCTAssertTrue(second.metronomeHapticsEnabled)
+
+        // Reset restores both.
+        second.reset()
+        XCTAssertEqual(second.metronomeSoundSet, .classic)
+        XCTAssertFalse(second.metronomeHapticsEnabled)
+    }
+
+    // MARK: - Experimental flags (all three round-trip + reset)
+
+    func test_experimentalFlags_persistAndReset() {
+        let first = SettingsStore(defaults: defaults)
+        first.experimentalHeroVisualization = true
+        first.experimentalFingerNumberLabels = true
+        first.experimentalReactiveBackdrop = true
+
+        let second = SettingsStore(defaults: defaults)
+        XCTAssertTrue(second.experimentalHeroVisualization)
+        XCTAssertTrue(second.experimentalFingerNumberLabels)
+        XCTAssertTrue(second.experimentalReactiveBackdrop)
+
+        second.reset()
+        XCTAssertFalse(second.experimentalHeroVisualization)
+        XCTAssertFalse(second.experimentalFingerNumberLabels)
+        XCTAssertFalse(second.experimentalReactiveBackdrop)
+    }
+
+    // MARK: - Accent + confirmation sound round-trip
+
+    func test_accentAndConfirmationSound_persist() {
+        let first = SettingsStore(defaults: defaults)
+        // (Accent has a single case today, but it must still survive the round-trip
+        // so adding cases later "just persists" without touching storage.)
+        first.accent = .purple
+        first.confirmationSound = .ding
+
+        let second = SettingsStore(defaults: defaults)
+        XCTAssertEqual(second.accent, .purple)
+        XCTAssertEqual(second.confirmationSound, .ding)
+
+        second.reset()
+        XCTAssertEqual(second.confirmationSound, .chime)
+    }
+
+    // MARK: - loadEnum garbage fallback
+
+    func test_loadEnum_garbageRawValue_fallsBackToDefault() {
+        // Simulate a corrupted/forward-incompatible store: a key holding a raw
+        // string that no current enum case matches. The store must fall back to the
+        // default rather than crash or leave the property unset.
+        defaults.set("not-a-real-theme", forKey: "guitarkit.settings.theme")
+        defaults.set("xyzzy", forKey: "guitarkit.settings.inTuneSensitivity")
+
+        let store = SettingsStore(defaults: defaults)
+        XCTAssertEqual(store.theme, .dark, "unknown theme raw value should fall back to the default")
+        XCTAssertEqual(store.inTuneSensitivity, .standard)
     }
 }

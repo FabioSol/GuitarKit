@@ -61,27 +61,21 @@ struct MetronomeView: View {
         ZStack {
             GKColor.background.ignoresSafeArea()
 
-            // A scroll view so the dial PLUS the new configuration controls fit
-            // on smaller iPhones in portrait without clipping.
-            ScrollView {
-                VStack(spacing: 24) {
-                    Text("Metronome")
-                        .font(GKFont.largeTitle)
-                        .foregroundStyle(GKColor.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 24) {
+                Text("Metronome")
+                    .font(GKFont.largeTitle)
+                    .foregroundStyle(GKColor.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    dial
-                    transportButton
-                    tapAndSteppers
+                dial
+                transportButton
+                tapAndSteppers
 
-                    // The musical configuration added in slice #16.
-                    configControls
-                }
-                .padding()
-                // Reserve room at the bottom so the last controls clear the
-                // floating rotary nav.
-                .padding(.bottom, 96)
+                // The musical configuration added in slice #16.
+                configControls
             }
+            .padding()
+            .padding(.bottom, 96)
         }
         // Sync the sound set + per-beat haptic from Settings (their home now),
         // on appear and whenever the user changes them in Settings.

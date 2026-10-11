@@ -15,7 +15,8 @@ final class FirstRunFlagTests: XCTestCase {
     /// A throwaway defaults store unique to each test run. Created in `setUp`,
     /// wiped in `tearDown` so tests don't leak state into one another.
     private var defaults: UserDefaults!
-    private let suiteName = "guitarkit.tests.firstrun"
+    // Per-test-instance UUID so suites never collide under parallel execution.
+    private let suiteName = "guitarkit.tests.firstrun.\(UUID().uuidString)"
 
     override func setUp() {
         super.setUp()

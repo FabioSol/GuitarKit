@@ -32,19 +32,22 @@ struct InputLevelMeter: View {
                 shape
                     .fill(GKColor.textSecondary.opacity(0.15))
 
-                // FILL: width = level × trackWidth, clamped to 0...1 so a stray
-                // out-of-range value can't overflow the track. `CGFloat(...)`
-                // converts our `Float` level to the `CGFloat` SwiftUI sizes use.
+                // FILL: maps 0...1 onto [height ... trackWidth] so the bar is
+                // always at least as wide as it is tall (a perfect circle at
+                // silence). This prevents the capsule collapsing into a sliver
+                // that pops out of the track at near-zero levels.
+                let clampedLevel = CGFloat(min(max(level, 0), 1))
+                let minFill = geometry.size.height
+                let fillWidth = minFill + (geometry.size.width - minFill) * clampedLevel
                 shape
                     .fill(
-                        // A subtle accent gradient gives the bar some life.
                         LinearGradient(
                             colors: [GKColor.accent.opacity(0.7), GKColor.accent],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
-                    .frame(width: geometry.size.width * CGFloat(min(max(level, 0), 1)))
+                    .frame(width: fillWidth)
                     // A gentle glow that grows with the level, so loud moments
                     // feel energetic. Radius scales with level.
                     .shadow(color: GKColor.accent.opacity(0.6),

@@ -39,43 +39,37 @@ struct CircleOfFifthsView: View {
             // behind the glass chrome.
             backdrop
 
-            // A scrollable column so the wheel + panel fit on small devices and
-            // with large Dynamic Type sizes without clipping.
-            ScrollView {
-                VStack(spacing: 14) {
-                    // Screen title.
-                    Text(GKTool.circleOfFifths.title)
-                        .font(GKFont.largeTitle)
-                        .foregroundStyle(GKColor.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 14) {
+                // Screen title.
+                Text(GKTool.circleOfFifths.title)
+                    .font(GKFont.largeTitle)
+                    .foregroundStyle(GKColor.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // THE WHEEL (selector). Given a generous square so the twelve
-                    // seats and their labels have room.
-                    CircleWheelView(viewModel: viewModel)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 290)
-
-                    // THE DETAILS PANEL — now the hub's action surface: its chord
-                    // chips and "View scale" button drive the cross-links.
-                    KeyDetailsPanelView(
-                        viewModel: viewModel,
-                        onOpenChord: onOpenChord,
-                        onOpenScale: onOpenScale
-                    )
+                // THE WHEEL (selector). Given a generous square so the twelve
+                // seats and their labels have room.
+                CircleWheelView(viewModel: viewModel)
                     .frame(maxWidth: .infinity)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-                // Leave room at the bottom so the floating rotary nav doesn't
-                // cover the last chord chips.
-                .padding(.bottom, 100)
+                    .frame(height: 290)
+
+                // THE DETAILS PANEL — now the hub's action surface: its chord
+                // chips and "View scale" button drive the cross-links.
+                KeyDetailsPanelView(
+                    viewModel: viewModel,
+                    onOpenChord: onOpenChord,
+                    onOpenScale: onOpenScale
+                )
+                .frame(maxWidth: .infinity)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 100)
         }
         .ignoresSafeArea(edges: .bottom)
     }
 
-    /// The shared ambient gradient (same recipe as ToolPlaceholderView so the
-    /// tool feels part of the same app).
+    /// The shared ambient gradient — the same accent-tinted backdrop recipe the
+    /// other tools use, so the screen feels part of the same app.
     private var backdrop: some View {
         LinearGradient(
             colors: [GKColor.accent.opacity(0.18), GKColor.background],

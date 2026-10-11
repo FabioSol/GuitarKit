@@ -46,9 +46,11 @@ public struct FretboardScale: Sendable {
         return scale.notes.firstIndex(of: note.pitchClass).map { $0 + 1 }
     }
 
-    /// All distinct in-scale notes across the board, ascending by pitch — the
-    /// sequence "play ascending" sounds. Deduplicated by MIDI number so a pitch
-    /// reachable on several strings plays once.
+    /// One tonic-to-tonic octave of in-scale notes, ascending by pitch.
+    /// Finds the lowest root note on the board and returns everything up to
+    /// (and including) that root one octave higher. Falls back to all notes
+    /// from the first root upward if the board doesn't span a full octave.
+    /// Deduplicated by MIDI number so unison positions play once.
     public func ascendingNotes() -> [Note] {
         var midis: Set<Int> = []
         for string in fretboard.openStrings.indices {
@@ -58,10 +60,19 @@ public struct FretboardScale: Sendable {
                 midis.insert(note.midiNumber)
             }
         }
-        return midis.sorted().map { Note.from(midiNumber: $0) }
+        let all = midis.sorted().map { Note.from(midiNumber: $0) }
+
+        guard let firstRootIdx = all.firstIndex(where: { $0.pitchClass == scale.root }) else {
+            return all
+        }
+        let octaveAboveMidi = all[firstRootIdx].midiNumber + 12
+        if let lastRootIdx = all.firstIndex(where: { $0.midiNumber == octaveAboveMidi }) {
+            return Array(all[firstRootIdx...lastRootIdx])
+        }
+        return Array(all[firstRootIdx...])
     }
 
-    /// The same notes, highest → lowest, for "play descending".
+    /// The same one-octave sequence, highest → lowest, for "play descending".
     public func descendingNotes() -> [Note] {
         ascendingNotes().reversed()
     }

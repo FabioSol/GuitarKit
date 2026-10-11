@@ -29,29 +29,21 @@ struct ChordsView: View {
         ZStack {
             GKColor.background.ignoresSafeArea()
 
-            // A ScrollView so the tall chord box + all the controls fit on small
-            // iPhones (and matches the Metronome / Circle tools). The content
-            // scrolls under the floating nav; the bottom padding keeps the last
-            // control clear of it.
-            ScrollView {
-                VStack(spacing: 18) {
-                    Text("Chords")
-                        .font(GKFont.largeTitle)
-                        .foregroundStyle(GKColor.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 18) {
+                Text("Chords")
+                    .font(GKFont.largeTitle)
+                    .foregroundStyle(GKColor.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    selectors
-                    chordName
-                    chordBox
-                    voicingControls
-                    playControls
-                    toggles
-                }
-                .padding()
-                // Reserve room at the bottom so the toggles clear the floating
-                // rotary nav.
-                .padding(.bottom, 96)
+                selectors
+                chordName
+                chordBox
+                voicingControls
+                playControls
+                toggles
             }
+            .padding()
+            .padding(.bottom, 96)
         }
     }
 
@@ -289,17 +281,16 @@ struct ChordsView: View {
 
     private var toggles: some View {
         VStack(spacing: 10) {
-            Picker("Labels", selection: $model.labelMode) {
-                Text("Notes").tag(ChordsViewModel.LabelMode.noteNames)
-                Text("Degrees").tag(ChordsViewModel.LabelMode.degrees)
-            }
-            .pickerStyle(.segmented)
+            GKSegmentedPicker(
+                options: [(.noteNames, "Notes"), (.degrees, "Degrees")],
+                selection: $model.labelMode
+            )
 
             Toggle("Left-handed", isOn: $model.isLeftHanded)
             Toggle("Standard tuning", isOn: $model.useStandardOverride)
         }
         .font(GKFont.body)
-        .tint(GKColor.accent)
+        .toggleStyle(GKToggleStyle())
     }
 
     // MARK: - Diagram helpers
