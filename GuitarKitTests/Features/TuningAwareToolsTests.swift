@@ -17,11 +17,12 @@ final class TuningAwareToolsTests: XCTestCase {
 
     /// A fresh selection store on a throwaway suite, with `instrumentID` + `tuning`
     /// already recorded (as the Tuner's picker would on selection).
-    private func store(recording instrumentID: String, _ tuningName: String) -> InstrumentSelectionStore {
+    private func store(recording instrumentID: String, _ tuningName: String,
+                       customs: CustomTuningStore? = nil) -> InstrumentSelectionStore {
         let suite = "guitarkit.tests.tuningaware.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
-        let store = InstrumentSelectionStore(defaults: defaults)
+        let store = InstrumentSelectionStore(defaults: defaults, customTunings: customs)
         store.recordSelection(instrumentID: instrumentID, tuningName: tuningName)
         return store
     }
@@ -76,8 +77,7 @@ final class TuningAwareToolsTests: XCTestCase {
         // The player saved DADGAD and selected it; its name is recorded but it is
         // NOT a built-in preset, so it must be resolved via the custom store.
         let model = ChordsViewModel(
-            selection: store(recording: "guitar-6", "DADGAD"),
-            customTunings: customStore(saving: dadgad)
+            selection: store(recording: "guitar-6", "DADGAD", customs: customStore(saving: dadgad))
         )
 
         XCTAssertEqual(model.currentTuning.name, "DADGAD",
@@ -90,18 +90,17 @@ final class TuningAwareToolsTests: XCTestCase {
 
     func test_scales_followSavedCustomTuning_dadgad() {
         let model = ScalesViewModel(
-            selection: store(recording: "guitar-6", "DADGAD"),
-            customTunings: customStore(saving: dadgad)
+            selection: store(recording: "guitar-6", "DADGAD", customs: customStore(saving: dadgad))
         )
         XCTAssertEqual(model.currentTuning.strings, dadgad.strings)
     }
 
     func test_presetWinsOverCustomOfSameName() {
         // A preset and a custom share the name "Drop D": the built-in preset wins.
+        let lowCDropD = Tuning(name: "Drop D", category: .alternate,
+                               strings: [note(.c,2), note(.a,2), note(.d,3), note(.g,3), note(.b,3), note(.e,4)])
         let model = ChordsViewModel(
-            selection: store(recording: "guitar-6", "Drop D"),
-            customTunings: customStore(saving: Tuning(name: "Drop D", category: .alternate,
-                strings: [note(.c,2), note(.a,2), note(.d,3), note(.g,3), note(.b,3), note(.e,4)]))
+            selection: store(recording: "guitar-6", "Drop D", customs: customStore(saving: lowCDropD))
         )
         // Built-in Drop D's low string is D2; if the custom (low C) had won it'd be C.
         XCTAssertEqual(model.currentTuning.strings.first, note(.d, 2))

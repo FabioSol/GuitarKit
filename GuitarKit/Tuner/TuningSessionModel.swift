@@ -44,6 +44,12 @@ final class TuningSessionModel {
     /// to the user's Feedback preference.
     @ObservationIgnored var hapticsEnabled = true
 
+    /// Fired after the targets are (re)built — every select/reconfigure/capo
+    /// path funnels through `rebuildSession`, so this is the single signal that
+    /// "the target frequencies changed". The `TunerCoordinator` hooks it to
+    /// retune the detector's frequency band to the new tuning.
+    @ObservationIgnored var onTargetsRebuilt: (() -> Void)?
+
     // MARK: Current instrument / tuning context
 
     /// Derives target frequencies from the active reference pitch + temperament.
@@ -116,7 +122,9 @@ final class TuningSessionModel {
     // MARK: Inputs
 
     /// Feed one detector reading (or `nil` for silence) into the session, stamped
-    /// with the current time. Called whenever `detector.reading` changes. Also
+    /// with the current time. Called for EVERY detector window (not only when
+    /// the reading changes — a steady in-tune reading must keep the hold timer
+    /// running until it latches). Also
     /// fires the matching haptics on each milestone transition.
     func ingest(_ reading: PitchReading?) {
         session.update(detectedFrequency: reading?.frequency, at: now())
@@ -157,6 +165,11 @@ final class TuningSessionModel {
         session.lock(toStringIndex: index)
     }
 
+    /// Release the manual lock and return to auto-detect.
+    func clearLock() {
+        session.clearLock()
+    }
+
     /// Start a brand-new session over the current tuning (e.g. on re-entering the
     /// Tuner) — clears all latches and live state.
     func reset() {
@@ -185,6 +198,9 @@ final class TuningSessionModel {
     /// Apply Settings-driven calibration: A4 reference pitch + in-tune tolerance.
     /// Rebuilds the targets so the change takes effect immediately.
     func reconfigure(referencePitch: ReferencePitch, tolerance: TuningTolerance) {
+        // Unchanged settings are a no-op — rebuilding would wipe the player's
+        // latched strings every time the Tuner reappears and re-applies them.
+        guard referencePitch != calculator.referenceA || tolerance != self.tolerance else { return }
         calculator = PitchCalculator(referenceA: referencePitch)
         self.tolerance = tolerance
         rebuildSession()
@@ -227,6 +243,7 @@ final class TuningSessionModel {
         )
         previousZone = nil
         wasComplete = false
+        onTargetsRebuilt?()
     }
 
     /// Resolve an instrument's headstock spec from its bundled JSON, falling back
@@ -255,8 +272,14 @@ final class TuningSessionModel {
     /// chip re-renders; mutated only via `incrementCapo()`/`resetCapo()`.
     private(set) var capo: Capo = .none
 
+    /// The A4 calibration the targets were built with (from Settings). The
+    /// coordinator hands it to the detector so chromatic note names agree.
+    var referencePitch: ReferencePitch { calculator.referenceA }
+
     /// All string targets, in order, for rendering the indicator row.
     var targets: [PitchTarget] { session.targets }
+    /// Whether the active string was chosen by a manual tap-lock (vs auto-detect).
+    var isManuallyLocked: Bool { session.isManuallyLocked }
     /// The string currently being tuned, if any.
     var activeStringIndex: Int? { session.activeStringIndex }
     /// Signed cents from the active target (+ sharp / − flat), or nil.

@@ -2,31 +2,25 @@
 //  TunerCoordinator.swift
 //  GuitarKit
 //
-//  The Tuner's AUDIO BRAIN, lifted out of `TunerView`.
+//  The Tuner's AUDIO BRAIN: it owns the mic engine, the pitch detector, the
+//  tone generator and the tuning session, and decides every transition
+//  between the Tuner's modes (targeted / tone / chromatic), sheets, and app
+//  lifecycle.
 //
-//  WHY THIS EXISTS:
-//  `TunerView` had grown into an 11-`@State` "god object" that owned the audio
-//  engine, detector, tone generator, session, and three interacting MODE flags
-//  (targeted / tone / chromatic) — and hand-wove the tricky transitions between
-//  them inline. That made the transitions impossible to unit-test (they were
-//  tangled with SwiftUI) and let three real lifecycle bugs hide:
+//  WHY A SEPARATE OBJECT (not `@State` in `TunerView`)?
+//  Those transitions are where the subtle bugs live — e.g. a sheet dismiss
+//  must restart the mic only if the sheet actually switched to playback;
+//  leaving chromatic mode must clear the targeted session's stale progress;
+//  returning to the foreground must revive a mic that stopped while the
+//  permission stayed the same. Here each one is a plain method over
+//  collaborators behind small protocols, so tests drive them with silent
+//  fakes — no SwiftUI, no hardware.
 //
-//    (a) EVERY sheet dismiss restarted the mic, even when the user just opened and
-//        closed the picker without playing anything.
-//    (b) Leaving CHROMATIC mode never cleared the targeted-tuning session, so it
-//        came back showing stale latches/zone from before.
-//    (c) Returning to the foreground refreshed permission but never re-asserted the
-//        engine — so if the mic had stopped in the background while permission was
-//        unchanged, it stayed dead.
-//
-//  This coordinator owns the audio collaborators (behind small protocols, so tests
-//  can swap in silent fakes) and exposes intent methods — `setToneMode`,
-//  `setChromatic`, `onSheetDismiss`, `onBecameActive`, … — each of which is a pure
-//  decision over those collaborators. The view shrinks to a thin shell that binds
-//  to the coordinator's state and forwards events. `MicrophonePermission` and the
-//  user-facing stores stay in the view (they decide WHICH sub-screen shows); the
-//  coordinator takes the resolved `MicPermissionState` as a parameter, which keeps
-//  its logic free of hardware and therefore testable.
+//  The app shell (`RootView`) owns it, so the player's tuning progress
+//  survives switching tools; `TunerView` is a thin shell that binds to its
+//  state and forwards events. `MicrophonePermission` stays in the view (it
+//  decides WHICH sub-screen shows); the coordinator takes the resolved
+//  `MicPermissionState` as a parameter, which keeps its logic hardware-free.
 //
 
 import Foundation
@@ -38,10 +32,10 @@ final class TunerCoordinator {
 
     // MARK: - What the audio session is currently configured for
     //
-    // We track this so we only RESTORE recording when we actually left it. That's
-    // the fix for bug (a): the old code blindly restarted the mic on every sheet
-    // dismiss; now we restart only if a sheet (the custom-tuning editor's
-    // tap-to-hear) had switched us to playback.
+    // We track this so we only RESTORE recording when we actually left it: a
+    // sheet dismiss restarts the mic only if the sheet (the custom-tuning
+    // editor's tap-to-hear) had switched us to playback — not after the player
+    // merely browsed the picker.
 
     enum AudioRoute: Equatable {
         case idle        // nothing configured / released
@@ -67,7 +61,22 @@ final class TunerCoordinator {
     /// highlight EXACTLY that peg even when two strings share a target frequency.
     private(set) var tonePegIndex: Int?
 
+    /// Whether the custom-tuning editor is up. Its capture-by-playing flow must
+    /// hear notes OUTSIDE the current tuning (that's the point of editing), so
+    /// while it's open the detector runs the full band instead of the
+    /// tuning-derived one.
+    private var isEditorCapture = false
+
     // MARK: - Owned collaborators (behind seams for testability)
+
+    /// THE instrument/tuning selection (persisted, shared with Chords/Scales,
+    /// and the owner of the custom tunings). The coordinator is its only
+    /// writer — `select` records the choice AND retunes the session in one
+    /// step, so the two can never disagree.
+    @ObservationIgnored let selection: InstrumentSelectionStore
+
+    /// The player's saved custom tunings (owned by `selection`).
+    var customTunings: CustomTuningStore { selection.customTunings ?? Self.fallbackCustoms }
 
     /// The targeted-tuning state machine bridge. Pure-ish logic; safe to use real
     /// in tests.
@@ -88,20 +97,48 @@ final class TunerCoordinator {
     /// `AudioSessionConfiguring` so tests can record the requests.
     @ObservationIgnored let audioSession: AudioSessionConfiguring
 
+    /// The harmonic check's gate in TARGETED mode (see `PitchTrackerConfig`).
+    /// Chromatic mode and editor capture always run with it off. A property
+    /// (not a constant) so the Tuner Lab can A/B it live; the coordinator
+    /// re-applies it on every mode change, so the two never fight.
+    @ObservationIgnored var targetedHarmonicGate = PitchTrackerConfig.targetedModeHarmonicGate {
+        didSet { applySessionContext() }
+    }
+
+    #if DEBUG
+    /// The Tuner Lab's clip recorder (debug builds only; `nil` when tests
+    /// inject a fake detector).
+    @ObservationIgnored private(set) var clipRecorder: PitchClipRecorder?
+    #endif
+
     // MARK: - Init
 
     /// Production init: builds the real, hardware-backed collaborators. We
     /// construct them in the body (not as default arguments) because they're
     /// `@MainActor` initializers, which can't be called from a default-argument
     /// context under this project's main-actor-by-default isolation.
-    convenience init() {
+    /// - Parameter selection: the app's shared instrument/tuning selection (it
+    ///   also knows the custom tunings). `nil` → a private, in-memory one
+    ///   (previews).
+    convenience init(selection: InstrumentSelectionStore? = nil) {
+        let detector = PitchDetector()
+        #if DEBUG
+        // The Tuner Lab's clip recorder taps the detector's input, so a clip
+        // holds exactly the samples the live tracker processed.
+        let recorder = PitchClipRecorder()
+        detector.clipRecorder = recorder
+        #endif
         self.init(
             session: TuningSessionModel(),
             engine: AudioInputEngine(),
-            detector: MPMPitchDetector(),
+            detector: detector,
             tone: ToneGenerator(),
-            audioSession: AudioSessionCoordinator()
+            audioSession: AudioSessionCoordinator.shared.client(),
+            selection: selection
         )
+        #if DEBUG
+        clipRecorder = recorder
+        #endif
     }
 
     /// Designated init: inject collaborators (tests pass fakes).
@@ -110,13 +147,58 @@ final class TunerCoordinator {
         engine: AudioInputProviding,
         detector: PitchDetecting,
         tone: TonePlaying,
-        audioSession: AudioSessionConfiguring
+        audioSession: AudioSessionConfiguring,
+        selection: InstrumentSelectionStore? = nil
     ) {
+        self.selection = selection ?? Self.privateSelection()
         self.session = session
         self.engine = engine
         self.detector = detector
         self.tone = tone
         self.audioSession = audioSession
+
+        // Keep the detector glued to the session: every tuning/capo/calibration
+        // change rebuilds the targets, which fires this hook. Applied once now
+        // so the cold-start tuning gets its band before the first rebuild.
+        session.onTargetsRebuilt = { [weak self] in self?.applySessionContext() }
+        applySessionContext()
+
+        // Every detector reading (on the main actor, once per ~0.1 s window)
+        // goes straight to the session — no view in between.
+        detector.onReading = { [weak self] reading in self?.handleDetectorReading(reading) }
+    }
+
+    // MARK: - Session → detector (band + calibration)
+
+    /// Point the detector at the current state:
+    ///   • the BAND — tuning-derived in targeted mode, full when a mode needs
+    ///     to hear arbitrary pitches (chromatic naming, editor capture);
+    ///   • the HARMONIC CHECK and the STRING TARGETS (which the probabilistic
+    ///     engine tracks) — on in targeted mode, off when any sound must be
+    ///     heard;
+    ///   • the REFERENCE PITCH — so chromatic note names use the same A4 as
+    ///     the targeted tuner.
+    /// Cheap to call redundantly — the tracker no-ops on unchanged values.
+    private func applySessionContext() {
+        if isChromaticMode || isEditorCapture {
+            detector.config.band = .full
+            detector.config.harmonicGate = 0
+            detector.config.targetsHz = []        // the probabilistic engine needs strings
+        } else {
+            // An empty tuning (the never-expected placeholder) yields no band;
+            // fall back to full rather than detecting nothing.
+            detector.config.band = DetectionBand.around(targets: session.targets) ?? .full
+            detector.config.harmonicGate = targetedHarmonicGate
+            detector.config.targetsHz = session.targets.map(\.frequencyHz)
+        }
+        detector.config.referencePitch = session.referencePitch
+    }
+
+    /// The custom-tuning editor opened: lift the band so capture-by-playing
+    /// hears any note. `onSheetDismiss` restores it.
+    func onEditorOpened() {
+        isEditorCapture = true
+        applySessionContext()
     }
 
     // MARK: - Engine lifecycle
@@ -132,6 +214,9 @@ final class TunerCoordinator {
             // audio flows. `start()` is idempotent, so a redundant call is a no-op.
             detector.attach(to: engine)
             do {
+                // State our need first: the shared session owner switches to
+                // recording (or keeps it, if it already is) before the mic starts.
+                try audioSession.configureForRecording()
                 try engine.start()
                 audioRoute = .recording
             } catch {
@@ -154,10 +239,78 @@ final class TunerCoordinator {
         syncEngine(to: permission)
     }
 
+    /// Whether the saved instrument/tuning has been restored into the session.
+    /// The coordinator outlives the Tuner screen (the app shell owns it), so
+    /// the restore must happen once — not on every return to the Tuner, which
+    /// would rebuild the session and wipe the strings already tuned.
+    @ObservationIgnored private(set) var hasRestoredSelection = false
+
+    /// Restore the player's saved instrument + tuning into the session, once.
+    func restoreSelectionOnce() {
+        guard !hasRestoredSelection else { return }
+        hasRestoredSelection = true
+        session.select(instrument: selection.currentInstrument, tuning: selection.currentTuning)
+    }
+
+    // MARK: - Choosing instruments and tunings (the single write path)
+
+    /// The player picked an instrument + tuning: remember it (for relaunch and
+    /// for Chords/Scales) and retune the session.
+    func select(instrument: Instrument, tuning: Tuning) {
+        selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
+        session.select(instrument: instrument, tuning: tuning)
+    }
+
+    /// Save a custom tuning for the current instrument and switch to it.
+    func saveCustomTuning(_ tuning: Tuning) {
+        let instrument = session.currentInstrument
+        customTunings.save(tuning, forInstrumentID: instrument.id)
+        select(instrument: instrument, tuning: tuning)
+    }
+
+    /// Delete one of an instrument's saved custom tunings.
+    func deleteCustomTuning(named name: String, for instrument: Instrument) {
+        customTunings.delete(named: name, forInstrumentID: instrument.id)
+    }
+
+    /// Previews/tests without the app's shared selection get a private one on
+    /// a throwaway UserDefaults suite — never the player's real preferences.
+    private static func privateSelection() -> InstrumentSelectionStore {
+        let suite = "guitarkit.private.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        return InstrumentSelectionStore(defaults: defaults,
+                                        customTunings: CustomTuningStore(defaults: defaults))
+    }
+    private static let fallbackCustoms: CustomTuningStore = {
+        let suite = "guitarkit.private.customs"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        return CustomTuningStore(defaults: defaults)
+    }()
+
+    /// The player left the Tuner for another tool: stop listening (mic off —
+    /// battery, privacy, and the orange mic indicator) and silence any
+    /// reference tone. The tuning session — instrument, capo, strings already
+    /// latched — is kept for when they come back. Releasing the Tuner's audio
+    /// need is safe: the shared session owner only deactivates once no other
+    /// tool (e.g. a playing metronome) needs audio either.
+    func onLeave() {
+        engine.stop()
+        detector.reset()
+        tone.shutdown()
+        audioSession.deactivate()
+        if isToneMode {
+            isToneMode = false
+            tonePegIndex = nil
+        }
+        audioRoute = .idle
+    }
+
     /// The app returned to the foreground. The view has just refreshed permission;
     /// we re-assert the engine so a mic that stopped in the background comes back.
-    /// This is bug (c)'s fix — `.onChange(of: permission)` can't catch an
-    /// *unchanged* grant, so nothing else would revive the engine.
+    /// Nothing else would: `.onChange(of: permission)` can't see an *unchanged*
+    /// grant.
     ///
     /// CRUCIAL GUARD: we only act when the engine is ACTUALLY dead. Scene phase can
     /// flip to `.active` repeatedly (notifications, Control Center, audio-route
@@ -207,15 +360,21 @@ final class TunerCoordinator {
     // MARK: - Chromatic mode
 
     /// Toggle chromatic mode. Turning ON forces tone-mode off (chromatic needs the
-    /// mic). Turning OFF resets the targeted session — bug (b)'s fix: while
-    /// chromatic was on the session was bypassed, so without this it would return
-    /// holding stale latches/zone. `session.reset()` keeps the chosen
+    /// mic). Turning OFF resets the targeted session: it was bypassed while
+    /// chromatic was on, so it would otherwise return holding stale
+    /// latches/zone. `session.reset()` keeps the chosen
     /// instrument/tuning/capo and only clears the live progress.
     func setChromatic(_ on: Bool, permission: MicPermissionState) {
         isChromaticMode = on
         if on {
             if isToneMode { setToneMode(false, permission: permission) }
+            // Chromatic names ANY pitch, so the tuning-derived band must not
+            // clip it — widen to the full range.
+            applySessionContext()
         } else {
+            // `session.reset()` rebuilds the targets, which re-fires the
+            // `onTargetsRebuilt` hook — restoring the tuning band as a side
+            // effect, now that `isChromaticMode` is already false.
             session.reset()
         }
     }
@@ -223,12 +382,16 @@ final class TunerCoordinator {
     // MARK: - Peg taps
 
     /// Route a peg tap: in tone-mode play that string's target pitch (remembering
-    /// the index for the highlight); otherwise lock onto it for tuning.
+    /// the index for the highlight); otherwise lock/unlock the string for tuning.
+    /// A second tap on the already-locked string clears the lock, returning to
+    /// auto-detect — so the user can escape a manual lock without any extra button.
     func handlePegTap(_ index: Int) {
         guard session.targets.indices.contains(index) else { return }
         if isToneMode {
             tonePegIndex = index
             tone.play(frequencyHz: session.targets[index].frequencyHz)
+        } else if session.isManuallyLocked && session.activeStringIndex == index {
+            session.clearLock()
         } else {
             session.lock(toStringIndex: index)
         }
@@ -261,10 +424,17 @@ final class TunerCoordinator {
     // MARK: - Sheet dismiss
 
     /// A picker/editor sheet closed. Restore the recording session ONLY if a sheet
-    /// actually switched us to playback (the editor's tap-to-hear) — bug (a)'s fix.
-    /// The old code restarted the mic on EVERY dismiss, even after just browsing the
-    /// picker. We also leave tone-mode untouched: its playback route is deliberate.
+    /// actually switched us to playback (the editor's tap-to-hear) — just browsing
+    /// the picker leaves the mic alone. Tone-mode is left untouched too: its
+    /// playback route is deliberate.
     func onSheetDismiss(permission: MicPermissionState) {
+        // If the editor had lifted the detection band for capture-by-playing,
+        // restore the tuning band. Independent of the audio-route restore
+        // below — the band is detector state, not session/route state.
+        if isEditorCapture {
+            isEditorCapture = false
+            applySessionContext()
+        }
         guard audioRoute == .playback, !isToneMode else { return }
         tone.shutdown()
         syncEngine(to: permission)

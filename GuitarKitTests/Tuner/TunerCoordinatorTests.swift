@@ -35,7 +35,13 @@ final class TunerCoordinatorTests: XCTestCase {
         var reading: PitchReading?
         private(set) var attachCount = 0
         private(set) var resetCount = 0
-        func process(samples: [Float], sampleRate: Double) {}
+        /// The last config applied, so tests can assert the coordinator retunes
+        /// detection on tuning/mode/calibration changes.
+        var config = PitchTrackerConfig()
+        var onReading: ((PitchReading?) -> Void)?
+        var band: DetectionBand { config.band }
+        /// Simulate the live detector publishing a reading.
+        func emit(_ reading: PitchReading?) { onReading?(reading) }
         func attach(to source: AudioInputProviding) { attachCount += 1 }
         func reset() { resetCount += 1 }
     }
@@ -249,5 +255,178 @@ final class TunerCoordinatorTests: XCTestCase {
         // just assert the reading didn't drive it to a complete/odd state by
         // confirming it stays on the locked string (ingest was skipped).
         XCTAssertEqual(h.coordinator.session.activeStringIndex, 1)
+    }
+
+    // MARK: - Detection band (the tuning-derived prior)
+
+    /// The band the default session (standard guitar, E2…E4) should produce.
+    private func standardGuitarBand() -> DetectionBand? {
+        DetectionBand.around(targets: TuningSessionModel(haptics: SilentHaptics()).targets)
+    }
+
+    func test_init_appliesTuningBand_notFullRange() {
+        let h = makeHarness()
+        XCTAssertEqual(h.detector.band, standardGuitarBand(),
+                       "targeted mode should constrain detection to the tuning's band")
+        XCTAssertNotEqual(h.detector.band, .full)
+        // Sanity-check the low edge: E2 (82.41 Hz) − 5 semitones ≈ 61.7 Hz.
+        XCTAssertEqual(h.detector.band.minFrequencyHz, 61.74, accuracy: 0.05)
+    }
+
+    func test_chromaticMode_widensToFullBand_andRestoresOnExit() {
+        let h = makeHarness()
+        h.coordinator.setChromatic(true, permission: .granted)
+        XCTAssertEqual(h.detector.band, .full, "chromatic must hear any pitch")
+
+        h.coordinator.setChromatic(false, permission: .granted)
+        XCTAssertEqual(h.detector.band, standardGuitarBand(),
+                       "leaving chromatic should restore the tuning band")
+    }
+
+    func test_editorCapture_widensToFullBand_andSheetDismissRestores() {
+        let h = makeHarness()
+        h.coordinator.onEditorOpened()
+        XCTAssertEqual(h.detector.band, .full, "capture-by-playing must hear any pitch")
+
+        h.coordinator.onSheetDismiss(permission: .granted)
+        XCTAssertEqual(h.detector.band, standardGuitarBand(),
+                       "dismissing the editor should restore the tuning band")
+    }
+
+    func test_capoChange_retunesBand() {
+        let h = makeHarness()
+        let openBand = h.detector.band
+        h.coordinator.session.incrementCapo()
+        // Capo 1 shifts every target up a semitone, so the whole band rises.
+        XCTAssertGreaterThan(h.detector.band.minFrequencyHz, openBand.minFrequencyHz)
+        XCTAssertGreaterThan(h.detector.band.maxFrequencyHz, openBand.maxFrequencyHz)
+    }
+
+    // MARK: - Leaving and returning to the Tuner
+
+    func test_onLeave_stopsListening_butKeepsTheSession() {
+        let h = makeHarness()
+        h.coordinator.onAppear(permission: .granted, isPriming: false)
+        h.coordinator.session.incrementCapo()
+        h.coordinator.onLeave()
+        XCTAssertEqual(h.engine.stopCount, 1, "the mic must stop when the player leaves the Tuner")
+        XCTAssertFalse(h.engine.isRunning)
+        XCTAssertEqual(h.coordinator.session.capo.fret, 1, "tuning progress survives the trip")
+
+        h.coordinator.onAppear(permission: .granted, isPriming: false)
+        XCTAssertTrue(h.engine.isRunning, "coming back starts listening again")
+    }
+
+    func test_onLeave_endsToneMode() {
+        let h = makeHarness()
+        h.coordinator.setToneMode(true, permission: .granted)
+        h.coordinator.onLeave()
+        XCTAssertFalse(h.coordinator.isToneMode)
+        XCTAssertGreaterThan(h.tone.shutdownCount, 0)
+    }
+
+    func test_selectionIsRestoredOnlyOnce() {
+        let h = makeHarness()
+        h.coordinator.restoreSelectionOnce()
+        h.coordinator.session.lock(toStringIndex: 1)
+        // A second appear must NOT rebuild the session — a rebuild clears the
+        // lock (and any strings already latched).
+        h.coordinator.restoreSelectionOnce()
+        XCTAssertTrue(h.coordinator.session.isManuallyLocked)
+    }
+
+    // MARK: - Selection: one writer, one truth
+
+    func test_select_updatesTheSharedSelection_andTheSession() {
+        let h = makeHarness()
+        let bass = InstrumentLibrary.instrument(id: "bass-4")!
+        let tuning = bass.tunings.last!
+        h.coordinator.select(instrument: bass, tuning: tuning)
+        XCTAssertEqual(h.coordinator.selection.currentInstrument.id, "bass-4",
+                       "Chords/Scales read the same selection")
+        XCTAssertEqual(h.coordinator.selection.currentTuning, tuning)
+        XCTAssertEqual(h.coordinator.session.currentInstrument.id, "bass-4")
+        XCTAssertEqual(h.coordinator.session.currentTuning, tuning)
+    }
+
+    func test_savingACustomTuning_selectsIt_andTheSelectionResolvesIt() {
+        let h = makeHarness()
+        let open = h.coordinator.session.currentTuning.strings
+        let custom = Tuning(name: "My Open", category: .alternate, strings: open)
+        h.coordinator.saveCustomTuning(custom)
+        XCTAssertEqual(h.coordinator.session.currentTuning.name, "My Open")
+        XCTAssertEqual(h.coordinator.selection.currentTuning.name, "My Open",
+                       "a custom tuning must resolve through the shared selection")
+        h.coordinator.deleteCustomTuning(named: "My Open", for: h.coordinator.session.currentInstrument)
+        XCTAssertTrue(h.coordinator.customTunings
+            .tunings(forInstrumentID: h.coordinator.session.currentInstrument.id).isEmpty)
+    }
+
+    // MARK: - Detector → session (no view in between)
+
+    func test_detectorReadings_reachTheSession_directly() {
+        let h = makeHarness()
+        let a2 = PitchReading(frequency: 110, note: Note(pitchClass: .a, octave: 2),
+                              centOffset: 0, clarity: 0.9)
+        h.detector.emit(a2)
+        XCTAssertEqual(h.coordinator.session.activeStringIndex, 1, "A2 is string 1 of standard guitar")
+    }
+
+    // MARK: - Harmonic check (targeted mode only)
+
+    func test_targetedMode_turnsHarmonicCheckOn() {
+        let h = makeHarness()
+        XCTAssertEqual(h.detector.config.harmonicGate, PitchTrackerConfig.targetedModeHarmonicGate)
+        XCTAssertGreaterThan(h.detector.config.harmonicGate, 0)
+    }
+
+    func test_chromaticAndEditorCapture_turnHarmonicCheckOff_andBack() {
+        let h = makeHarness()
+        h.coordinator.setChromatic(true, permission: .granted)
+        XCTAssertEqual(h.detector.config.harmonicGate, 0, "chromatic must hear any sound")
+        h.coordinator.setChromatic(false, permission: .granted)
+        XCTAssertEqual(h.detector.config.harmonicGate, PitchTrackerConfig.targetedModeHarmonicGate)
+
+        h.coordinator.onEditorOpened()
+        XCTAssertEqual(h.detector.config.harmonicGate, 0, "capture-by-playing must hear any sound")
+        h.coordinator.onSheetDismiss(permission: .granted)
+        XCTAssertEqual(h.detector.config.harmonicGate, PitchTrackerConfig.targetedModeHarmonicGate)
+    }
+
+    func test_targetedMode_passesStringTargets_chromaticClearsThem() {
+        // The probabilistic engine tracks the tuning's strings; chromatic mode
+        // has none (it falls back to the gated engine).
+        let h = makeHarness()
+        XCTAssertEqual(h.detector.config.targetsHz, h.coordinator.session.targets.map(\.frequencyHz))
+        XCTAssertEqual(h.detector.config.targetsHz.count, 6)
+        h.coordinator.setChromatic(true, permission: .granted)
+        XCTAssertTrue(h.detector.config.targetsHz.isEmpty)
+        h.coordinator.setChromatic(false, permission: .granted)
+        XCTAssertEqual(h.detector.config.targetsHz.count, 6)
+    }
+
+    func test_changedTargetedGate_survivesAModeRoundTrip() {
+        // The Tuner Lab sets the gate on the coordinator, so a chromatic
+        // round-trip restores the Lab's value, not the default.
+        let h = makeHarness()
+        h.coordinator.targetedHarmonicGate = 0.5
+        h.coordinator.setChromatic(true, permission: .granted)
+        h.coordinator.setChromatic(false, permission: .granted)
+        XCTAssertEqual(h.detector.config.harmonicGate, 0.5)
+    }
+
+    // MARK: - Reference pitch (chromatic names use the user's calibration)
+
+    func test_init_appliesSessionReferencePitch() {
+        let h = makeHarness()
+        XCTAssertEqual(h.detector.config.referencePitch, .standard)
+    }
+
+    func test_recalibration_reachesDetector() {
+        let h = makeHarness()
+        h.coordinator.session.reconfigure(referencePitch: ReferencePitch(hertz: 432),
+                                          tolerance: .standard)
+        XCTAssertEqual(h.detector.config.referencePitch.hertz, 432,
+                       "the chromatic readout must name notes against the calibrated A4")
     }
 }

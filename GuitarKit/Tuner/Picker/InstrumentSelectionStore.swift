@@ -127,8 +127,13 @@ final class InstrumentSelectionStore {
     /// "main-actor default argument" warning this project is careful about. (For a
     /// main-actor value we'd default the parameter to `nil` and resolve inside the
     /// init instead.)
-    init(defaults: UserDefaults = .standard) {
+    /// The player's saved custom tunings — consulted when the remembered
+    /// tuning name isn't a built-in preset (e.g. a saved "DADGAD").
+    @ObservationIgnored let customTunings: CustomTuningStore?
+
+    init(defaults: UserDefaults = .standard, customTunings: CustomTuningStore? = nil) {
         self.defaults = defaults
+        self.customTunings = customTunings
 
         // Read each value back. `string(forKey:)` already returns `nil` for a
         // missing key, which is exactly the "nothing chosen yet" we want for the
@@ -216,6 +221,19 @@ final class InstrumentSelectionStore {
     }
 
     // MARK: Restoring the persisted selection
+
+    // MARK: The current selection (THE source of truth)
+
+    /// The instrument the player is on. Every tool reads it from here; only
+    /// `TunerCoordinator.select` changes it (via `recordSelection`).
+    var currentInstrument: Instrument { restoredInstrument() }
+
+    /// The tuning the player is on — a preset, or one of their saved customs.
+    var currentTuning: Tuning {
+        let instrument = currentInstrument
+        return restoredTuning(for: instrument,
+                              customTunings: customTunings?.tunings(forInstrumentID: instrument.id) ?? [])
+    }
 
     /// The instrument to open the Tuner on, resolved from the persisted id. Falls
     /// back to `InstrumentLibrary.default` (standard guitar, the cold-start

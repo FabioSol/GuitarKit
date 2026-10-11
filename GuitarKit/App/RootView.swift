@@ -27,18 +27,13 @@ struct RootView: View {
     /// Whether the Settings sheet is showing.
     @State private var showingSettings = false
 
-    /// The player's instrument + tuning selection, OWNED here at the shell so it's
-    /// the single shared source of truth across tools. The Tuner writes to it (when
-    /// the player picks an instrument/tuning), and the tuning-aware Chords/Scales
-    /// tools read from it — so tuning the guitar to Drop D in the Tuner is reflected
-    /// in their voicings/scale shapes. Injected into the environment for the Tuner.
-    /// Seeded in `init` (shared with the Chords/Scales models).
+    /// The player's instrument + tuning selection (which also owns their saved
+    /// custom tunings), OWNED here at the shell so it's the single source of
+    /// truth across tools. The Tuner changes it — only through
+    /// `TunerCoordinator.select` — and the tuning-aware Chords/Scales tools read
+    /// it, so tuning to Drop D in the Tuner reshapes their voicings and scales.
+    /// Seeded in `init` and handed to the coordinator and the Chords/Scales models.
     @State private var instrumentSelection: InstrumentSelectionStore
-
-    /// The player's saved CUSTOM tunings, also owned at the shell so the Tuner and
-    /// the tuning-aware Chords/Scales tools resolve the same customs. Seeded in
-    /// `init` and injected into the environment for the Tuner.
-    @State private var customTunings: CustomTuningStore
 
     // The view models for the harmony tools, OWNED here at the shell so they
     // outlive the per-tool screens (which `.id(selection)` recreates on each
@@ -54,19 +49,35 @@ struct RootView: View {
     // accents survive navigating away and back (its view is rebuilt by the
     // `switch` like the others). Audio still stops on leave via `onDisappear`.
     @State private var metronomeModel = MetronomeViewModel()
+    // The Tuner's audio brain, hoisted like the models above: rebuilt with the
+    // screen it would lose the tuning session (strings already latched) and
+    // pay for a fresh audio engine on every return to the Tuner. The Tuner
+    // screen stops the mic when it leaves and restarts it when it comes back.
+    @State private var tunerCoordinator: TunerCoordinator
 
-    /// Build the shell, wiring ONE shared `InstrumentSelectionStore` into both the
-    /// environment (for the Tuner) and the Chords/Scales view models, so all three
-    /// tools agree on the current instrument + tuning. We construct the store here
-    /// and seed each `@State` from it; because it's a reference type, every tool
-    /// holds the same instance and sees the same live updates.
+    /// Set to `true` while the Tuner is showing its first-run priming screen.
+    /// Driven by `TunerPrimingKey` so the nav bar and settings button hide
+    /// themselves — they don't make sense on that screen and overlap the button.
+    @State private var tunerIsPriming = false
+
+    /// Whether the metronome mini-player is visible. Becomes `true` when the
+    /// metronome starts while the user is on another tool (or when they navigate
+    /// away while it's playing). Only cleared by the explicit stop button — the
+    /// control stays on screen while paused so the user can resume or fully stop.
+    @State private var showMetronomeMini = false
+
+    /// Build the shell, wiring ONE shared `InstrumentSelectionStore` (with the
+    /// custom tunings inside it) into the Tuner's coordinator and the
+    /// Chords/Scales view models, so all three tools agree on the current
+    /// instrument + tuning. It's a reference type, so every tool holds the same
+    /// instance and sees the same live updates.
     init() {
-        let selection = InstrumentSelectionStore()
         let customs = CustomTuningStore()
+        let selection = InstrumentSelectionStore(customTunings: customs)
         _instrumentSelection = State(initialValue: selection)
-        _customTunings = State(initialValue: customs)
-        _chordsModel = State(initialValue: ChordsViewModel(selection: selection, customTunings: customs))
-        _scalesModel = State(initialValue: ScalesViewModel(selection: selection, customTunings: customs))
+        _chordsModel = State(initialValue: ChordsViewModel(selection: selection))
+        _scalesModel = State(initialValue: ScalesViewModel(selection: selection))
+        _tunerCoordinator = State(initialValue: TunerCoordinator(selection: selection))
     }
 
     var body: some View {
@@ -86,21 +97,67 @@ struct RootView: View {
                 .id(selection) // give each tool its own identity so the
                                // transition actually runs on change.
                 .animation(.easeInOut(duration: 0.25), value: selection)
+                // TunerView bubbles this up when showing its first-run priming
+                // screen so we can hide the chrome that doesn't belong there.
+                .onPreferenceChange(TunerPrimingKey.self) { tunerIsPriming = $0 }
 
             // THE ROTARY NAVIGATION, floating over the screen at the bottom.
-            RotaryNavBar(selection: $selection)
-                // Nudge it down a touch into the home-indicator area; the arc
-                // reaches up into the content.
-                .padding(.bottom, 4)
+            // Hidden while the Tuner's priming screen is up — it overlaps the
+            // call-to-action button and makes no sense before the mic is set up.
+            if !tunerIsPriming {
+                RotaryNavBar(selection: $selection)
+                    .padding(.bottom, 4)
+            }
         }
+        // SWIPE NAVIGATION — using `.gesture` (not `.highPriorityGesture`) so
+        // child views keep priority. A horizontal ScrollView (e.g. the Scales
+        // fretboard) captures its own touches first; this fires only when no
+        // child gesture claims the drag. Non-wrapping: stops at first/last tool.
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    guard abs(dx) > abs(dy), abs(dx) > 60 else { return }
+                    if dx < 0 { navigateForward() } else { navigateBackward() }
+                }
+        )
         // The Settings gear, floating in the top-trailing corner above the tool.
-        .overlay(alignment: .topTrailing) { settingsButton }
+        .overlay(alignment: .topTrailing) {
+            if !tunerIsPriming { settingsButton }
+        }
+        // Metronome mini-player, top-left, visible while away from the metronome.
+        .overlay(alignment: .topLeading) {
+            if showMetronomeMini && selection != .metronome {
+                MetronomeMiniPlayerView(
+                    isPlaying: metronomeModel.isPlaying,
+                    onToggle: metronomeModel.toggle,
+                    onStop: {
+                        metronomeModel.stop()
+                        showMetronomeMini = false
+                    }
+                )
+                .padding(.top, 52)
+                .padding(.leading, 12)
+                .transition(.scale(scale: 0.7, anchor: .topLeading).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showMetronomeMini)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: metronomeModel.isPlaying)
+        // Show the mini-player when the metronome starts while on another tool,
+        // or when the user navigates away while it's already playing.
+        .onChange(of: metronomeModel.isPlaying) { _, playing in
+            if playing, selection != .metronome { showMetronomeMini = true }
+        }
+        .onChange(of: selection) { _, newSelection in
+            if newSelection == .metronome {
+                showMetronomeMini = false
+            } else if metronomeModel.isPlaying {
+                showMetronomeMini = true
+            }
+        }
         // Make the global preferences available to every tool below us.
         .environment(settings)
-        // Share the instrument/tuning selection + custom tunings with the Tuner
-        // (the Chords/Scales models already hold the same instances from `init`).
-        .environment(instrumentSelection)
-        .environment(customTunings)
         // Force the user's chosen appearance (or follow the system when `.system`).
         .preferredColorScheme(settings.theme.colorScheme)
         // Present Settings as a sheet wrapped in its own navigation container.
@@ -141,7 +198,7 @@ struct RootView: View {
             // The Tuner is the first real tool. It owns mic priming, permission,
             // audio capture, and (for now) a live input-level meter. Other tools
             // still show the shared placeholder until their slices land.
-            TunerView()
+            TunerView(coordinator: tunerCoordinator)
         case .metronome:
             // The Metronome tool: a circular tempo dial driving the drift-free
             // `MetronomeEngine`. Its model is owned by the shell (above) so the
@@ -185,6 +242,20 @@ struct RootView: View {
         scalesModel.root = scale.root
         scalesModel.scaleType = scale.type
         withAnimation(.easeInOut(duration: 0.25)) { selection = .scales }
+    }
+
+    // MARK: - Swipe navigation
+
+    private func navigateForward() {
+        let tools = GKTool.allCases
+        guard let idx = tools.firstIndex(of: selection), idx < tools.count - 1 else { return }
+        selection = tools[tools.index(after: idx)]
+    }
+
+    private func navigateBackward() {
+        let tools = GKTool.allCases
+        guard let idx = tools.firstIndex(of: selection), idx > 0 else { return }
+        selection = tools[tools.index(before: idx)]
     }
 }
 

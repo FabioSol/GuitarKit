@@ -4,9 +4,9 @@
 //
 //  The observable state behind the Scales tool: the chosen root + scale, the
 //  active tuning + capo, the display toggles (handedness, label mode, orientation,
-//  finger-number flag, Current ⇄ Standard override), and the computed
-//  `FretboardScale` the view highlights. Playback (ascending/descending) is here
-//  too, driven by the tone generator.
+//  Current ⇄ Standard override), and the computed `FretboardScale` the view
+//  highlights. Playback (ascending/descending) is here too, driven by the tone
+//  generator.
 //
 //  The musical truth lives in the PURE `Fretboard`/`FretboardScale` engine; this
 //  class just holds the user's choices and recomputes the projection on demand.
@@ -19,8 +19,8 @@ import Foundation
 @Observable
 final class ScalesViewModel {
 
-    /// How in-scale frets are labeled.
-    enum LabelMode: CaseIterable, Hashable { case noteNames, degrees }
+    /// How in-scale frets are labeled — the shared toggle both tools use.
+    typealias LabelMode = ToolLabelMode
 
     // MARK: User choices
 
@@ -36,9 +36,6 @@ final class ScalesViewModel {
     var isLeftHanded = false
     /// Note names vs scale degrees on the dots.
     var labelMode: LabelMode = .noteNames
-    /// Finger-number labels — behind a flag (default off), since fingering isn't
-    /// generated yet; the toggle reserves the behavior for a later pass.
-    var showFingerNumbers = false
     /// Flip which string sits on top (orientation flip).
     var orientationFlipped = false
 
@@ -48,46 +45,24 @@ final class ScalesViewModel {
     // MARK: Tunings
     //
     // The Scales tool is TUNING-AWARE: the highlighted notes reflect the instrument
-    // + tuning the player chose in the Tuner (e.g. Drop D). The shared source of
-    // truth is the app's `InstrumentSelectionStore` — the SAME observable instance
-    // the Tuner writes to. We hold a reference and DERIVE the tunings on demand, so
-    // a tuning change re-renders the Scales board automatically. Optional so
-    // previews/tests fall back to standard guitar; an explicit instrument/tuning can
-    // also be pinned via the `fixed*` values.
-    @ObservationIgnored private let selection: InstrumentSelectionStore?
-    @ObservationIgnored private let customTunings: CustomTuningStore?
-    @ObservationIgnored private let fixedInstrument: Instrument?
-    @ObservationIgnored private let fixedTuning: Tuning?
+    // + tuning the player chose in the Tuner (e.g. Drop D). The derivation lives in
+    // the shared `InstrumentTuningContext` (the SAME logic the Chords tool uses), so
+    // a tuning change in the Tuner re-renders the Scales board automatically.
+    @ObservationIgnored private let tuningContext: InstrumentTuningContext
 
-    /// The instrument currently in effect — from the shared selection store, an
-    /// explicitly pinned instrument, or the standard-guitar default.
-    var currentInstrument: Instrument {
-        fixedInstrument ?? selection?.restoredInstrument() ?? InstrumentLibrary.default
-    }
+    /// The instrument currently in effect (shared selection / pinned / default).
+    var currentInstrument: Instrument { tuningContext.currentInstrument }
 
     /// The instrument's STANDARD (home) tuning — what the `Current ⇄ Standard`
     /// override maps against.
-    var standardTuning: Tuning {
-        currentInstrument.defaultTuning
-            ?? Tuning(name: "Standard", category: .standard, strings: [])
-    }
+    var standardTuning: Tuning { tuningContext.standardTuning }
 
-    /// The tuning the player is actually on (e.g. Drop D, or a saved custom like
-    /// DADGAD), resolved from the shared selection — consulting built-in presets
-    /// first and the player's saved custom tunings second. Falls back to a pinned
-    /// tuning, then to standard.
-    var currentTuning: Tuning {
-        if let fixedTuning { return fixedTuning }
-        guard let selection else { return standardTuning }
-        let customs = customTunings?.tunings(forInstrumentID: currentInstrument.id) ?? []
-        return selection.restoredTuning(for: currentInstrument, customTunings: customs)
-    }
+    /// The tuning the player is actually on (preset → custom → standard).
+    var currentTuning: Tuning { tuningContext.currentTuning }
 
     // MARK: Audio (playback)
 
-    @ObservationIgnored private let tone = ToneGenerator()
-    @ObservationIgnored private let coordinator = AudioSessionCoordinator()
-    @ObservationIgnored private var playTask: Task<Void, Never>?
+    @ObservationIgnored private let tonePlayer = ToolTonePlayer()
 
     // MARK: Init
 
@@ -96,14 +71,14 @@ final class ScalesViewModel {
     ///   - currentTuning: the active tuning to map against; defaults to standard.
     init(
         selection: InstrumentSelectionStore? = nil,
-        customTunings: CustomTuningStore? = nil,
         instrument: Instrument? = nil,
         currentTuning: Tuning? = nil
     ) {
-        self.selection = selection
-        self.customTunings = customTunings
-        self.fixedInstrument = instrument
-        self.fixedTuning = currentTuning
+        self.tuningContext = InstrumentTuningContext(
+            selection: selection,
+            instrument: instrument,
+            currentTuning: currentTuning
+        )
     }
 
     // MARK: Derived
@@ -141,23 +116,9 @@ final class ScalesViewModel {
 
     // MARK: Playback
 
-    func playAscending()  { playSequence(fretboardScale.ascendingNotes()) }
-    func playDescending() { playSequence(fretboardScale.descendingNotes()) }
-    func stopPlayback()   { playTask?.cancel(); tone.stop() }
-
-    /// Play a list of notes in sequence, each a brief sustained tone. We switch
-    /// the audio session to playback first so the tones are audible.
-    private func playSequence(_ notes: [Note]) {
-        playTask?.cancel()
-        try? coordinator.configureForPlayback()
-        let calculator = PitchCalculator()
-        playTask = Task { @MainActor in
-            for note in notes {
-                if Task.isCancelled { break }
-                tone.play(frequencyHz: calculator.frequency(of: note))
-                try? await Task.sleep(for: .milliseconds(220))
-            }
-            tone.stop()
-        }
-    }
+    /// Each scale note plays for ~220 ms before the next; no extra ring-out (a
+    /// stepwise scale wants an even cadence, so the last note stops after its gap).
+    func playAscending()  { tonePlayer.play(fretboardScale.ascendingNotes(), gapMs: 220) }
+    func playDescending() { tonePlayer.play(fretboardScale.descendingNotes(), gapMs: 220) }
+    func stopPlayback()   { tonePlayer.stop() }
 }

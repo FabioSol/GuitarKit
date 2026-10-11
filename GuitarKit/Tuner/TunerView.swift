@@ -24,25 +24,20 @@ struct TunerView: View {
     // MARK: Owned state
 
     /// The audio brain: owns the engine, detector, tone generator, session, and
-    /// the targeted/tone/chromatic mode transitions.
-    @State private var coordinator = TunerCoordinator()
+    /// the targeted/tone/chromatic mode transitions. OWNED BY THE APP SHELL
+    /// (`RootView`), not this view: the shell rebuilds tool screens on every
+    /// switch, and the coordinator — with the player's tuning progress — must
+    /// outlive that. This view starts/stops listening as it appears/leaves.
+    let coordinator: TunerCoordinator
 
     /// The microphone-permission model. Drives which sub-screen we show, so it
     /// stays here in the view rather than in the coordinator.
     @State private var permission = MicrophonePermission()
 
-    /// The picker's persistent memory (last-used instrument/tuning + usage counts)
-    /// and the player's saved custom tunings. Both are SHARED stores the app shell
-    /// owns and injects, so the tuning the player picks/saves here also drives the
-    /// tuning-aware Chords/Scales tools. We fall back to owned instances only when
-    /// nothing was injected (e.g. SwiftUI previews), via the accessors below.
-    @Environment(InstrumentSelectionStore.self) private var injectedSelection: InstrumentSelectionStore?
-    @Environment(CustomTuningStore.self) private var injectedCustomTunings: CustomTuningStore?
-    @State private var ownedSelection = InstrumentSelectionStore()
-    @State private var ownedCustomTunings = CustomTuningStore()
-
-    private var selection: InstrumentSelectionStore { injectedSelection ?? ownedSelection }
-    private var customTunings: CustomTuningStore { injectedCustomTunings ?? ownedCustomTunings }
+    /// The shared instrument/tuning selection and custom tunings — read
+    /// through the coordinator, which is also their only writer.
+    private var selection: InstrumentSelectionStore { coordinator.selection }
+    private var customTunings: CustomTuningStore { coordinator.customTunings }
 
     #if DEBUG
     @State private var devConfig = TunerDevConfig()
@@ -86,17 +81,28 @@ struct TunerView: View {
                 }
             }
         }
+        // Bubble the priming state up so RootView can hide the nav bar while
+        // the priming screen is showing (nav there is confusing and overlaps).
+        .preference(key: TunerPrimingKey.self, value: shouldShowPriming)
         .onChange(of: permission.state) { _, newState in
             coordinator.syncEngine(to: newState)
         }
         .task {
-            restoreSelection()
             applySettings()
             #if DEBUG
+            // Start the Lab's in-tune slider FROM the user's Settings, so the
+            // Lab only overrides Settings once its slider is actually moved.
+            if let settings { devConfig.inTuneThresholdCents = settings.inTuneSensitivity.centsTolerance }
             applyDevOverrides()
             #endif
+            // Restore the saved instrument/tuning LAST: selecting it rebuilds
+            // the targets, which re-derives the detector's tuning band — so the
+            // band reflects the restored tuning and (in DEBUG) isn't clobbered
+            // by the dev-override pass above.
+            restoreSelection()
             coordinator.onAppear(permission: permission.state, isPriming: shouldShowPriming)
         }
+        .onDisappear { coordinator.onLeave() }
         .onChange(of: settings?.referencePitchHz) { _, _ in applySettings() }
         .onChange(of: settings?.inTuneSensitivity) { _, _ in applySettings() }
         .onChange(of: settings?.hapticsEnabled) { _, _ in applySettings() }
@@ -131,7 +137,7 @@ struct TunerView: View {
                         onTapPeg: coordinator.handlePegTap
                     )
                 } back: {
-                    ChromaticReadoutView(reading: coordinator.detector.reading)
+                    LiveChromaticReadout(detector: coordinator.detector)
                 }
 
                 HStack(spacing: 16) {
@@ -151,15 +157,12 @@ struct TunerView: View {
                 }
 
                 if !coordinator.isToneMode {
-                    InputLevelMeter(level: coordinator.engine.level)
+                    LiveLevelMeter(engine: coordinator.engine)
                         .padding(.horizontal, 40)
                 }
             }
             .padding()
             .padding(.bottom, 90)
-        }
-        .onChange(of: coordinator.detector.reading) { _, reading in
-            coordinator.handleDetectorReading(reading)
         }
         .sheet(item: $activeSheet, onDismiss: { coordinator.onSheetDismiss(permission: permission.state) }) { sheet in
             switch sheet {
@@ -168,16 +171,17 @@ struct TunerView: View {
                     selectedInstrument: coordinator.session.currentInstrument,
                     selectedTuning: coordinator.session.currentTuning,
                     mostUsedInstrumentIDs: selection.mostUsedInstrumentIDs(limit: 3),
-                    onSelect: { instrument, tuning in
-                        coordinator.session.select(instrument: instrument, tuning: tuning)
-                        selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
-                    },
+                    onSelect: coordinator.select,
                     onCreateCustom: {
+                        // Lift the detection band while the editor is up so its
+                        // capture-by-playing can hear notes outside the current
+                        // tuning; the sheet's onDismiss restores it.
+                        coordinator.onEditorOpened()
                         activeSheet = .customEditor(strings: coordinator.session.currentTuning.strings)
                     },
                     customTunings: { customTunings.tunings(forInstrumentID: $0.id) },
                     onDeleteCustom: { instrument, tuning in
-                        customTunings.delete(named: tuning.name, forInstrumentID: instrument.id)
+                        coordinator.deleteCustomTuning(named: tuning.name, for: instrument)
                     }
                 )
             case .customEditor(let strings):
@@ -186,14 +190,19 @@ struct TunerView: View {
                     instrument: coordinator.session.currentInstrument,
                     onHear: handleHearNote,
                     detectedNote: { coordinator.detector.reading?.note },
-                    onSave: handleSaveCustomTuning
+                    onSave: coordinator.saveCustomTuning
                 )
             }
         }
         .ignoresSafeArea()
         #if DEBUG
         .sheet(isPresented: $showingDevPanel) {
-            TunerDevPanelView(config: devConfig) { showingDevPanel = false }
+            TunerDevPanelView(
+                config: devConfig,
+                recorder: coordinator.clipRecorder,
+                targets: coordinator.session.targets,
+                makeClipMetadata: clipMetadata
+            ) { showingDevPanel = false }
         }
         .onChange(of: devConfig.inTuneThresholdCents) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.smoothing) { _, _ in applyDevOverrides() }
@@ -201,8 +210,8 @@ struct TunerView: View {
         .onChange(of: devConfig.levelGateDB) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.algorithm) { _, _ in applyDevOverrides() }
         .onChange(of: devConfig.preprocessEnabled) { _, _ in applyDevOverrides() }
-        .onChange(of: devConfig.preprocessLowPassHz) { _, _ in applyDevOverrides() }
-        .onChange(of: devConfig.preprocessHighPassHz) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.harmonicGate) { _, _ in applyDevOverrides() }
+        .onChange(of: devConfig.engine) { _, _ in applyDevOverrides() }
         #endif
     }
 
@@ -262,25 +271,13 @@ struct TunerView: View {
     }
 
     private func restoreSelection() {
-        let instrument = selection.restoredInstrument()
-        let customs = customTunings.tunings(forInstrumentID: instrument.id)
-        coordinator.session.select(
-            instrument: instrument,
-            tuning: selection.restoredTuning(for: instrument, customTunings: customs)
-        )
+        coordinator.restoreSelectionOnce()
     }
 
     private func handleHearNote(_ note: Note) {
         let hz = settings?.referencePitchHz ?? ReferencePitch.standard.hertz
         let calculator = PitchCalculator(referenceA: ReferencePitch(hertz: hz))
         coordinator.playHearNote(frequencyHz: calculator.frequency(of: note))
-    }
-
-    private func handleSaveCustomTuning(_ tuning: Tuning) {
-        let instrument = coordinator.session.currentInstrument
-        customTunings.save(tuning, forInstrumentID: instrument.id)
-        coordinator.session.select(instrument: instrument, tuning: tuning)
-        selection.recordSelection(instrumentID: instrument.id, tuningName: tuning.name)
     }
 
     private func applySettings() {
@@ -330,18 +327,65 @@ struct TunerView: View {
                 holdDuration: 0.7
             )
         )
-        guard let mpm = coordinator.detector as? MPMPitchDetector else { return }
-        mpm.setSmoothing(emaFactor: Float(devConfig.smoothing))
-        mpm.setClarityThreshold(Float(devConfig.clarityThreshold))
-        mpm.setLevelGate(dB: Float(devConfig.levelGateDB))
-        mpm.setAlgorithm(devConfig.algorithm)
-        mpm.setPreprocessing(enabled: devConfig.preprocessEnabled)
-        mpm.setPreprocessorCutoffs(highPassHz: devConfig.preprocessHighPassHz,
-                                   lowPassHz: devConfig.preprocessLowPassHz)
+        coordinator.detector.config.smoothing = Float(devConfig.smoothing)
+        coordinator.detector.config.clarityThreshold = Float(devConfig.clarityThreshold)
+        coordinator.detector.config.levelGateDB = Float(devConfig.levelGateDB)
+        coordinator.detector.config.algorithm = devConfig.algorithm
+        coordinator.detector.config.preprocessingEnabled = devConfig.preprocessEnabled
+        coordinator.targetedHarmonicGate = Float(devConfig.harmonicGate)
+        coordinator.detector.config.engine = devConfig.engine
+    }
+
+    /// The label + replay context for a new Lab clip: which string (or `nil`
+    /// for noise only), plus the band/calibration/tuning in force right now.
+    private func clipMetadata(target: PitchTarget?,
+                              pluck: PitchClipRecorder.Pluck?,
+                              background: PitchClipRecorder.Background) -> PitchClipRecorder.Metadata {
+        let config = coordinator.detector.config
+        return PitchClipRecorder.Metadata(
+            note: target?.note.name,
+            expectedHz: target?.frequencyHz,
+            pluck: target == nil ? nil : pluck,
+            background: background,
+            instrument: coordinator.session.currentInstrument.name,
+            tuning: coordinator.session.currentTuning.name,
+            referenceA: config.referencePitch.hertz,
+            bandMinHz: config.band.minFrequencyHz,
+            bandMaxHz: config.band.maxFrequencyHz,
+            highPassHz: config.band.highPassHz,
+            lowPassHz: config.band.lowPassHz,
+            targetsHz: config.targetsHz
+        )
     }
     #endif
 }
 
+// MARK: - Live sub-views
+//
+// The mic level and the detector reading change ~10 times a second. If
+// `TunerView`'s own body read them, SwiftUI would re-evaluate the WHOLE tuner
+// screen (headstock, pill, buttons…) on every audio buffer. These two tiny
+// views read the fast-changing value themselves, so only they redraw.
+
+/// The input level meter, observing the engine's `level` directly.
+private struct LiveLevelMeter: View {
+    let engine: AudioInputProviding
+    var body: some View { InputLevelMeter(level: engine.level) }
+}
+
+/// The chromatic readout, observing the detector's `reading` directly.
+private struct LiveChromaticReadout: View {
+    let detector: PitchDetecting
+    var body: some View { ChromaticReadoutView(reading: detector.reading) }
+}
+
+/// Preference key that bubbles the priming state up to `RootView` so it can
+/// hide the nav bar and settings button while the first-run screen is showing.
+struct TunerPrimingKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 #Preview {
-    TunerView()
+    TunerView(coordinator: TunerCoordinator())
 }

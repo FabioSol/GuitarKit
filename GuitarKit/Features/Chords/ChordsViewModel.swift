@@ -82,13 +82,11 @@ final class ChordsViewModel {
     ///   - currentTuning: the active tuning to voice against; defaults to standard.
     init(
         selection: InstrumentSelectionStore? = nil,
-        customTunings: CustomTuningStore? = nil,
         instrument: Instrument? = nil,
         currentTuning: Tuning? = nil
     ) {
         self.tuningContext = InstrumentTuningContext(
             selection: selection,
-            customTunings: customTunings,
             instrument: instrument,
             currentTuning: currentTuning
         )
