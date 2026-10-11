@@ -20,7 +20,7 @@ import Foundation
 ///
 /// `struct` because it's an immutable bundle of results. `Equatable`/`Sendable`
 /// for testing and safe sharing.
-public struct PitchTarget: Equatable, Sendable {
+nonisolated public struct PitchTarget: Equatable, Sendable {
     /// The note that sounds at this target (already capo-shifted, if any).
     public let note: Note
     /// The frequency to tune to, in Hertz (includes any temperament sweetening).
@@ -48,7 +48,7 @@ public struct PitchTarget: Equatable, Sendable {
 /// declared as the *protocol* type `any Temperament`, not a concrete struct —
 /// that's the polymorphism seam: the calculator works with equal temperament
 /// today and any sweetened profile later, unchanged.
-public struct PitchCalculator: Sendable {
+nonisolated public struct PitchCalculator: Sendable {
     public let referenceA: ReferencePitch
     public let temperament: any Temperament
 

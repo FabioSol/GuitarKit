@@ -12,10 +12,16 @@
 //  weak to pass the clarity gate. Meanwhile the low region is full of mains hum
 //  (50/60 Hz), rumble and handling noise. So:
 //
-//    • a HIGH-PASS (~65 Hz) removes hum / rumble / DC — below a guitar's low E
-//      (82 Hz), so the note itself is untouched.
-//    • a LOW-PASS (~1 kHz) tames the loud high harmonics + hiss, so the
-//      FUNDAMENTAL'S periodicity dominates what MPM/YIN see.
+//    • a HIGH-PASS removes hum / rumble / DC below the band's low edge — the
+//      corner sits under the lowest string being tuned, so the note itself is
+//      untouched.
+//    • a LOW-PASS tames the loud high harmonics + hiss, so the FUNDAMENTAL'S
+//      periodicity dominates what MPM/YIN see.
+//
+//  The corners are NOT fixed: they come from the tuning-derived `DetectionBand`
+//  (high-pass at the band's low edge, low-pass with harmonic headroom above the
+//  highest string), so hum rejection tightens for a ukulele and relaxes for a
+//  5-string bass instead of being tuned for guitar.
 //
 //  Filtering changes amplitude/phase but NOT the fundamental period, so tuning
 //  accuracy is preserved — the detector still reports the right pitch, just more
@@ -32,7 +38,7 @@ import Foundation
 /// A second-order IIR filter ("biquad"), the standard building block for clean
 /// low-/high-pass filters. Uses the RBJ "cookbook" coefficients and the
 /// Transposed Direct Form II structure (numerically friendly, two state words).
-struct Biquad: Equatable {
+nonisolated struct Biquad: Equatable {
 
     // Feed-forward / feed-back coefficients (already normalised by a0).
     private var b0: Float = 1, b1: Float = 0, b2: Float = 0
@@ -96,7 +102,7 @@ struct Biquad: Equatable {
 // MARK: - Preprocessor
 
 /// The band-pass stage applied to each buffer before detection.
-struct PitchPreprocessor {
+nonisolated struct PitchPreprocessor {
 
     /// Whether filtering is applied at all (off = pass-through).
     var isEnabled: Bool
@@ -110,7 +116,10 @@ struct PitchPreprocessor {
     /// The sample rate the biquads are currently tuned for (0 = not yet built).
     private var configuredRate: Double = 0
 
-    init(highPassHz: Double = 65, lowPassHz: Double = 1000, enabled: Bool = true) {
+    /// Corners are REQUIRED (no defaults): they always come from the active
+    /// `DetectionBand`, derived from the selected tuning (or `.full`). Baked-in
+    /// fallback corners would just be a second, disagreeing source of truth.
+    init(highPassHz: Double, lowPassHz: Double, enabled: Bool = true) {
         self.highPassHz = highPassHz
         self.lowPassHz = lowPassHz
         self.isEnabled = enabled
@@ -137,7 +146,8 @@ struct PitchPreprocessor {
     /// from a clean filter state.
     mutating func reset() { hp.reset(); lp.reset() }
 
-    /// Live-tune the corners (Tuner Lab). Rebuilds if we're already configured.
+    /// Retune the corners (called when the detection band changes — a new
+    /// tuning, capo, or mode). Rebuilds if we're already configured.
     mutating func setCutoffs(highPassHz: Double, lowPassHz: Double) {
         self.highPassHz = highPassHz
         self.lowPassHz = lowPassHz

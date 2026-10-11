@@ -23,7 +23,7 @@ import Foundation
 /// frequency (Hz) and a 0…1 CLARITY score (how confidently periodic the signal
 /// is — ~1 for a clean sustained tone, low for noise/transients). The detector
 /// applies the clarity/level GATES; the algorithms just report what they found.
-public struct PitchEstimate: Equatable, Sendable {
+nonisolated public struct PitchEstimate: Equatable, Sendable {
     public let frequency: Float
     public let clarity: Float
     public init(frequency: Float, clarity: Float) {
@@ -36,13 +36,18 @@ public struct PitchEstimate: Equatable, Sendable {
 
 /// Which detector to run. `CaseIterable`/`String`-raw so the Tuner Lab can list
 /// them and persist a choice.
-public enum PitchAlgorithm: String, CaseIterable, Sendable {
+nonisolated public enum PitchAlgorithm: String, CaseIterable, Sendable {
     /// McLeod Pitch Method — the NSDF-based detector (good octave resistance).
     case mpm
     /// YIN — the cumulative-mean-normalized-difference detector (often steadier
     /// on guitar low strings).
     case yin
-    /// Run BOTH and cross-check — most robust, ~2× the work.
+    /// HPS — the Harmonic Product Spectrum (frequency domain). Excels at
+    /// weak-fundamental notes (it needs a real harmonic series; a pure sine fools
+    /// it into a subharmonic, so it's primarily a tie-breaker — see `ensemble`).
+    case hps
+    /// Run them and cross-check — most robust. MPM + YIN agree most of the time;
+    /// HPS is consulted only to break their octave disagreements.
     case ensemble
 
     /// A short label for the picker.
@@ -50,6 +55,7 @@ public enum PitchAlgorithm: String, CaseIterable, Sendable {
         switch self {
         case .mpm:      return "MPM"
         case .yin:      return "YIN"
+        case .hps:      return "HPS"
         case .ensemble: return "Ensemble"
         }
     }
@@ -70,6 +76,9 @@ public enum PitchAlgorithm: String, CaseIterable, Sendable {
         case .yin:
             return YIN.detectPitch(samples: samples, sampleRate: sampleRate,
                                    minFrequency: minFrequency, maxFrequency: maxFrequency)
+        case .hps:
+            return HPS.detectPitch(samples: samples, sampleRate: sampleRate,
+                                   minFrequency: minFrequency, maxFrequency: maxFrequency)
         case .ensemble:
             return Self.ensemble(samples, sampleRate, minFrequency, maxFrequency)
         }
@@ -86,23 +95,67 @@ public enum PitchAlgorithm: String, CaseIterable, Sendable {
             .map { PitchEstimate(frequency: $0.frequency, clarity: $0.clarity) }
     }
 
-    /// Combine MPM + YIN:
-    ///   • Both fire & AGREE (within ~40 cents) → corroborated: BLEND the two
-    ///     frequencies (weighted by clarity) for a more accurate result than
-    ///     either alone, and nudge the confidence up.
-    ///   • Both fire & DISAGREE (e.g. one made an octave error) → trust the more
-    ///     confident detector.
-    ///   • Only one fires → use it.
+    /// Run MPM + YIN over the buffer and fuse their answers via `combine` (the
+    /// pure, unit-tested decision rule), with HPS on call as the tie-breaker.
+    ///
+    /// WHY HPS IS LAZY: HPS only ever changes the outcome when MPM and YIN
+    /// DISAGREE — in the (overwhelmingly common) agreement branch its answer is
+    /// never consulted. Running its large FFT on every buffer, ~10×/second on
+    /// the main actor, was the jank risk that originally kept it out of the
+    /// ensemble. Passing it as an `@autoclosure` means the FFT runs ONLY on the
+    /// rare disagreement frames — near-zero amortized cost, full tie-breaking
+    /// benefit (octave errors are exactly where the two time-domain detectors
+    /// split, and exactly where HPS's harmonic-series evidence is decisive).
     private static func ensemble(_ samples: [Float], _ sampleRate: Double,
                                  _ minF: Float, _ maxF: Float) -> PitchEstimate? {
         let mpm = runMPM(samples, sampleRate, minF, maxF)
         let yin = YIN.detectPitch(samples: samples, sampleRate: sampleRate,
                                   minFrequency: minF, maxFrequency: maxF)
+        return combine(mpm: mpm, yin: yin,
+                       hps: HPS.detectPitch(samples: samples, sampleRate: sampleRate,
+                                            minFrequency: minF, maxFrequency: maxF))
+    }
 
+    /// The window (in cents) within which two detectors are treated as AGREEING.
+    private static let agreementCents: Float = 40
+
+    /// How close (in cents) HPS must be to MPM or YIN to be treated as corroborating
+    /// it when those two disagree.
+    private static let hpsCorroborationCents: Float = 60
+
+    /// Absolute cents between two frequencies (0 if either is non-positive).
+    private static func centsBetween(_ a: Float, _ b: Float) -> Float {
+        guard a > 0, b > 0 else { return 0 }
+        return abs(1200 * log2(a / b))
+    }
+
+    /// The PURE decision rule the ensemble applies to two detectors' answers,
+    /// pulled out of `ensemble` so it can be unit-tested directly with synthetic
+    /// estimates (forcing a real MPM/YIN *disagreement* from audio is impractical —
+    /// they're both autocorrelation-family and tend to agree). `internal` for
+    /// `@testable` access.
+    ///
+    ///   • Both fire & AGREE (within ~40 cents) → corroborated: BLEND the two
+    ///     frequencies (weighted by clarity) for a result more accurate than either
+    ///     alone, and nudge the confidence up. (HPS isn't needed here.)
+    ///   • Both fire & DISAGREE (e.g. one made an octave error) → if `hps`
+    ///     corroborates one of them (within ~60 cents, and closer to it than the
+    ///     other), trust that one — HPS breaks the octave tie. Otherwise fall back
+    ///     to the more confident detector.
+    ///   • Only one fires → use it. Neither → nil.
+    ///
+    /// `hps` is an `@autoclosure`: the expression the caller passes (a full HPS
+    /// run, with its big FFT) is evaluated ONLY if this rule actually reaches
+    /// the disagreement branch and consults it — the agreement/single/neither
+    /// paths never pay for it.
+    static func combine(
+        mpm: PitchEstimate?,
+        yin: PitchEstimate?,
+        hps: @autoclosure () -> PitchEstimate? = nil
+    ) -> PitchEstimate? {
         switch (mpm, yin) {
         case let (m?, y?):
-            let cents = abs(1200 * log2(m.frequency / y.frequency))
-            if cents <= 40 {
+            if centsBetween(m.frequency, y.frequency) <= agreementCents {
                 // Corroborated: a clarity-weighted average of the two agreeing
                 // frequencies is more accurate than picking one (which could be
                 // the less-accurate of the two by up to ~40 cents).
@@ -112,9 +165,17 @@ public enum PitchAlgorithm: String, CaseIterable, Sendable {
                     : (m.frequency + y.frequency) / 2
                 return PitchEstimate(frequency: frequency,
                                      clarity: min(1, max(m.clarity, y.clarity) + 0.1))
-            } else {
-                return m.clarity >= y.clarity ? m : y
             }
+            // Disagreement. Let HPS break the tie if it clearly sides with one.
+            // (`hps()` is where the lazy HPS run actually happens.)
+            if let hps = hps() {
+                let dm = centsBetween(m.frequency, hps.frequency)
+                let dy = centsBetween(y.frequency, hps.frequency)
+                if dm <= hpsCorroborationCents, dm < dy { return m }
+                if dy <= hpsCorroborationCents, dy < dm { return y }
+            }
+            // No HPS, or HPS corroborates neither → trust the more confident.
+            return m.clarity >= y.clarity ? m : y
         case let (m?, nil): return m
         case let (nil, y?): return y
         case (nil, nil):    return nil

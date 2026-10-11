@@ -36,7 +36,7 @@ import Foundation
 ///
 /// `Sendable` marks the type as safe to pass across concurrency boundaries —
 /// trivially true for a simple value type, and good hygiene in modern Swift.
-public enum PitchClass: Int, CaseIterable, Comparable, Sendable {
+nonisolated public enum PitchClass: Int, CaseIterable, Comparable, Sendable {
     case c = 0      // C
     case cSharp     // C# / Db
     case d          // D
@@ -102,7 +102,7 @@ public enum PitchClass: Int, CaseIterable, Comparable, Sendable {
 /// OCTAVE NUMBERING: we use *scientific pitch notation*, where middle C is C4
 /// and the A above it (the tuning reference) is A4 = MIDI 69. This is the most
 /// common convention and the one the PRD's formula assumes.
-public struct Note: Equatable, Hashable, Sendable {
+nonisolated public struct Note: Equatable, Hashable, Sendable {
     /// Which of the twelve notes (ignoring octave).
     public let pitchClass: PitchClass
     /// The scientific-pitch octave number (A4 = the 440 Hz reference octave).

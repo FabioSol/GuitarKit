@@ -20,7 +20,7 @@ import Foundation
 /// pure level-metering math. Callers write `AudioLevel.rms(of:)` etc. Marked
 /// `enum` with no cases so it can never be instantiated — it's just a home for
 /// these `static` functions.
-enum AudioLevel {
+nonisolated enum AudioLevel {
 
     // MARK: - RMS (Root Mean Square)
 

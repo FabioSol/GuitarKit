@@ -21,7 +21,7 @@ import Foundation
 /// guitar.
 ///
 /// `Equatable`/`Hashable`/`Sendable` for comparison, persistence, and safety.
-public struct Capo: Equatable, Hashable, Sendable {
+nonisolated public struct Capo: Equatable, Hashable, Sendable {
     /// Bounds for the semitone shift. `static` = belongs to the type.
     public static let minFret = 0
     public static let maxFret = 12

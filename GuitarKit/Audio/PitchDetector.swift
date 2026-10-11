@@ -2,49 +2,31 @@
 //  PitchDetector.swift
 //  GuitarKit
 //
-//  The live, observable pitch detector that the Tuner UI binds to. It is the
-//  bridge between three pure pieces and the noisy real world:
+//  The LIVE, observable pitch detector that the Tuner UI binds to. It is a thin
+//  adapter: all of the actual pitch logic lives in the pure `PitchTracker`.
+//  This class only does what a pure value can't:
 //
-//      audio buffers ──▶ [RMS gate] ──▶ MPM.detectPitch ──▶ PitchSmoother
-//                                                                 │
-//                        PitchCalculator.nearestNote ◀────────────┘
-//                                   │
-//                                   ▼
-//                              published `reading`  ──▶ SwiftUI
+//    • run the tracker OFF the main thread, fed straight from the mic, and
+//    • publish the result as observable state for SwiftUI (`reading`).
+//
+//  THREADS:
+//
+//      audio thread ──copy samples──▶ worker queue (PitchTracker) ──reading──▶ main actor
+//
+//  Detection costs a few milliseconds per ~0.1 s window — far more in an
+//  unoptimized Debug build — and the main thread also has to draw the UI. So
+//  the tracker lives on its own serial queue; only the finished reading hops
+//  to the main actor. If the queue ever falls behind (a slow Debug build), new
+//  windows are DROPPED rather than queued, so readings never lag further and
+//  further behind the strings.
 //
 //  WHY A PROTOCOL IN FRONT OF IT (`PitchDetecting`)?
-//  Same reasoning as `AudioInputProviding`: the UI and tests should depend on a
-//  small interface, not this concrete class. It also documents the seam the next
-//  slice (#05, targeted tuning) plugs into — that slice consumes `reading` and
-//  compares it against a chosen string's target.
-//
-//  WHY IS `process` PUBLIC AND BUFFER-FREE?
-//  Detection is fully exercisable from a *synthetic* `[Float]` feed — no mic. The
-//  live path (`attach(to:)`) just converts hardware buffers into that same call,
-//  so tests drive `process(samples:sampleRate:)` directly with a known sine wave.
+//  The `TunerCoordinator` and its tests depend on this small interface, not the
+//  concrete class, so tests can pass a fake that just records what it was told.
 //
 
 import AVFoundation
 import Observation
-
-// MARK: - The reading the UI consumes
-
-/// One fully-resolved pitch reading: the smoothed frequency, the note we believe
-/// is sounding, how many cents off it is, and a 0…1 confidence. `nil` reading
-/// (on the detector) means "nothing detected right now" (silence/noise).
-///
-/// A plain value `struct` — immutable result, `Equatable` so SwiftUI can tell
-/// when it actually changed.
-struct PitchReading: Equatable {
-    /// Smoothed fundamental frequency, in Hz.
-    let frequency: Double
-    /// The nearest equal-tempered note (the chromatic readout).
-    let note: Note
-    /// Signed cents from that note: positive = sharp, negative = flat.
-    let centOffset: Double
-    /// Detector confidence, 0…1 (the MPM clarity of this estimate).
-    let clarity: Float
-}
 
 // MARK: - The seam
 
@@ -55,195 +37,159 @@ protocol PitchDetecting: AnyObject {
     /// The latest reading, or `nil` when nothing confident is detected.
     var reading: PitchReading? { get }
 
-    /// Process one window of mono samples (the testable, hardware-free entry).
-    func process(samples: [Float], sampleRate: Double)
+    /// Called on the main actor with every new reading (including `nil`), so
+    /// the coordinator can feed the tuning session without a view in between.
+    var onReading: ((PitchReading?) -> Void)? { get set }
+
+    /// How detection behaves: the tuning-derived band, the reference pitch,
+    /// and the Tuner Lab knobs. Re-assigning an unchanged value is a no-op, so
+    /// the coordinator can re-apply it on every tuning/mode transition.
+    var config: PitchTrackerConfig { get set }
+
+    /// Subscribe to a live audio source's buffer stream (wires the mic into
+    /// detection). Re-attaching just replaces the previous subscription.
+    func attach(to source: AudioInputProviding)
 
     /// Drop transient state (smoothing history) — call when audio stops.
     func reset()
 }
 
-// MARK: - The MPM-backed implementation
+// MARK: - The live implementation
 
-/// Concrete detector built on `MPM` + `PitchSmoother` + `PitchCalculator`.
+/// Runs `PitchTracker` on a background queue and publishes its readings.
 ///
 /// `@Observable` so SwiftUI re-renders when `reading` changes; `@MainActor`
 /// because that published state lives on the main thread.
 @MainActor
 @Observable
-final class MPMPitchDetector: PitchDetecting {
+final class PitchDetector: PitchDetecting {
 
-    // MARK: Published output
-
-    /// The current reading, written by the engine and read-only to the UI.
+    /// The current reading, written on the main actor and read by the UI.
     private(set) var reading: PitchReading?
 
-    // MARK: Collaborators / config (not observed — plumbing, not UI state)
+    @ObservationIgnored var onReading: ((PitchReading?) -> Void)?
 
-    /// Resolves a frequency to its nearest note. Carries the user's reference
-    /// pitch (e.g. A=440), so recalibrating later just swaps this in.
-    @ObservationIgnored private let calculator: PitchCalculator
-
-    /// The de-jitter/smoothing stage. `var` because `push`/`reset` mutate it.
-    @ObservationIgnored private var smoother = PitchSmoother()
-
-    /// Band-pass preprocessing (hum/rumble out, dominant harmonics tamed) so the
-    /// LOW strings — whose fundamental is weak vs. their harmonics — detect
-    /// reliably. `var` because it filters statefully and can be tuned live.
-    @ObservationIgnored private var preprocessor = PitchPreprocessor()
-
-    /// Which detection algorithm to run (MPM / YIN / Ensemble). `var` so it can
-    /// be swapped live in the Tuner Lab. Defaults to the ensemble for robustness.
-    @ObservationIgnored private var algorithm: PitchAlgorithm
-
-    /// MPM's confidence gate: estimates below this clarity are discarded. `var`
-    /// so it can be tuned live (the Tuner Lab). Default loosened to admit plucked
-    /// guitar — a decaying, slightly inharmonic string scores lower clarity than
-    /// a sustained voice, so a high gate silently dropped most guitar notes.
-    @ObservationIgnored private var clarityThreshold: Float
-
-    /// The level gate, as a raw RMS amplitude. Below this we treat the buffer as
-    /// silence/background and publish no reading — satisfying the PRD's "don't
-    /// twitch on noise". We store it as linear RMS (converted from a dBFS
-    /// threshold once) so the per-buffer check is a cheap comparison. `var` so it
-    /// can be tuned live.
-    @ObservationIgnored private var levelGateRMS: Float
-
-    /// - Parameters:
-    ///   - calculator: tuning context for note resolution (defaults to A=440,
-    ///     equal temperament).
-    ///   - clarityThreshold: minimum MPM clarity to accept (0…1). Lower = catches
-    ///     more (decaying/quiet guitar) but risks twitching on noise.
-    ///   - levelGateDB: quietest signal we'll analyze, in dBFS. Lower admits the
-    ///     decaying tail of a plucked note instead of dropping it after the attack.
-    init(
-        calculator: PitchCalculator? = nil,
-        algorithm: PitchAlgorithm = .ensemble,
-        clarityThreshold: Float = 0.6,
-        levelGateDB: Float = -52
-    ) {
-        // Default to A=440 / equal temperament. We build it HERE rather than as a
-        // default argument: under this project's main-actor-by-default isolation,
-        // default-argument expressions run in a non-isolated context where the
-        // (isolated) `PitchCalculator` initializer can't be called.
-        self.calculator = calculator ?? PitchCalculator()
-        self.algorithm = algorithm
-        self.clarityThreshold = clarityThreshold
-        // dBFS → linear RMS: amplitude = 10^(dB / 20).
-        self.levelGateRMS = pow(10, levelGateDB / 20)
+    /// The configuration, mirrored here so reads are instant on the main
+    /// actor; every write is forwarded to the worker (in order with the audio).
+    @ObservationIgnored var config: PitchTrackerConfig {
+        didSet { if config != oldValue { worker.setConfig(config) } }
     }
 
-    // MARK: Core (testable) processing
+    /// Owns the tracker and its queue.
+    @ObservationIgnored private let worker: Worker
 
-    /// Run the full pipeline on one window of samples and publish the result.
+    /// Bumped on every `reset()`. Results computed before a reset carry the old
+    /// number and are dropped instead of resurrecting a stale reading.
+    @ObservationIgnored private var generation = 0
+
+    #if DEBUG
+    /// Tuner Lab clip recorder: when set, every window of raw samples the
+    /// tracker sees is also handed to it, so a recording replays EXACTLY what
+    /// the live tuner processed.
+    @ObservationIgnored var clipRecorder: PitchClipRecorder?
+    #endif
+
+    init(config: PitchTrackerConfig = PitchTrackerConfig()) {
+        self.config = config
+        worker = Worker(config: config)
+    }
+
+    /// Process one window SYNCHRONOUSLY and publish the result — the
+    /// hardware-free entry point tests drive (the live path is `attach`).
     func process(samples: [Float], sampleRate: Double) {
-        // 1) LEVEL GATE. Cheap RMS first — if it's basically silence, bail out
-        // and forget history so the next note starts fresh. Reusing the pure
-        // `AudioLevel.rms` keeps one definition of "loudness".
-        let rms = AudioLevel.rms(of: samples)
-        guard rms >= levelGateRMS else {
-            reading = nil
-            smoother.reset()
-            preprocessor.reset()        // start the filter clean on the next note
-            return
-        }
-
-        // 2) PREPROCESS: band-pass the buffer (hum/rumble out, harmonics tamed) so
-        // the fundamental dominates — the fix for the low strings. The level gate
-        // above uses the ORIGINAL signal (true loudness); detection uses the
-        // filtered copy.
-        let detectionSamples = preprocessor.process(samples, sampleRate: sampleRate)
-
-        // 3) DETECT with the chosen algorithm (MPM / YIN / Ensemble). It returns
-        // a RAW estimate; we apply the clarity gate here so the same gate works
-        // for every algorithm.
-        guard let estimate = algorithm.detect(samples: detectionSamples, sampleRate: sampleRate) else {
-            reading = nil
-            return
-        }
-        // CLARITY GATE: reject noisy-but-loud signals (low periodicity).
-        guard estimate.clarity >= clarityThreshold else {
-            reading = nil
-            return
-        }
-
-        // 4) SMOOTH the raw frequency (kills octave-jump outliers + wobble).
-        let smoothed = smoother.push(estimate.frequency)
-
-        // 5) RESOLVE to a note + cents and publish.
-        guard let resolved = calculator.nearestNote(toFrequency: Double(smoothed)) else {
-            reading = nil
-            return
-        }
-        reading = PitchReading(
-            frequency: Double(smoothed),
-            note: resolved.note,
-            centOffset: resolved.centOffset,
-            clarity: estimate.clarity
-        )
+        let (result, stamp) = worker.processNow(samples, sampleRate: sampleRate)
+        publish(result, samples: samples, sampleRate: sampleRate, generation: stamp)
     }
 
     func reset() {
-        smoother.reset()
-        preprocessor.reset()
-        reading = nil
-    }
-
-    /// Replace the smoother with one tuned to a new EMA factor (0…1). Used by the
-    /// debug "Tuner Lab" panel (slice #07) to A/B smoothing live; the new factor
-    /// takes effect on the next reading. We rebuild rather than mutate because the
-    /// factor is set once at `PitchSmoother` init; history is dropped (a clean
-    /// restart), which is exactly what we want when changing how smoothing behaves.
-    func setSmoothing(emaFactor: Float) {
-        smoother = PitchSmoother(emaFactor: emaFactor)
-    }
-
-    /// Set the MPM clarity gate live (Tuner Lab). Lower catches more guitar;
-    /// higher rejects more noise.
-    func setClarityThreshold(_ value: Float) {
-        clarityThreshold = min(max(value, 0), 1)
-    }
-
-    /// Set the level (RMS) gate live, from a dBFS value. Lower admits quieter /
-    /// decaying notes.
-    func setLevelGate(dB: Float) {
-        levelGateRMS = pow(10, dB / 20)
-    }
-
-    /// Swap the detection algorithm live (Tuner Lab): MPM / YIN / Ensemble.
-    func setAlgorithm(_ algorithm: PitchAlgorithm) {
-        self.algorithm = algorithm
-    }
-
-    /// Turn band-pass preprocessing on/off live (Tuner Lab).
-    func setPreprocessing(enabled: Bool) {
-        preprocessor.isEnabled = enabled
-    }
-
-    /// Live-tune the band-pass corners (Tuner Lab). Lower the low-pass to tame
-    /// more harmonics on stubborn low strings; raise the high-pass to fight hum.
-    func setPreprocessorCutoffs(highPassHz: Double, lowPassHz: Double) {
-        preprocessor.setCutoffs(highPassHz: highPassHz, lowPassHz: lowPassHz)
+        generation += 1
+        worker.reset(generation: generation)
+        publish(nil, samples: nil, sampleRate: 0, generation: generation)
     }
 
     // MARK: Live wiring
 
     /// Subscribe this detector to a live audio source. Each hardware buffer is
-    /// converted to samples and fed through `process`.
-    ///
-    /// THREADING: the source calls our closure on a real-time *audio thread*, so
-    /// we do only the cheap buffer→`[Float]` copy there, then hop to the main
-    /// actor (where this detector lives) to run detection and publish. Detection
-    /// for one ~4096-sample buffer is light and fires only ~10×/second, so the
-    /// main thread handles it comfortably without stutter.
+    /// copied out on the audio thread and handed to the worker queue; the
+    /// reading comes back to the main actor.
     func attach(to source: AudioInputProviding) {
+        let worker = self.worker
         source.onBuffer { [weak self] buffer in
-            // On the audio thread: read the format and copy out the samples.
+            // On the audio thread: copy the samples (the buffer is reused).
             let sampleRate = buffer.format.sampleRate
             let samples = AudioInputEngine.samples(from: buffer)
+            worker.process(samples, sampleRate: sampleRate) { result, stamp in
+                // On the worker queue: hop to the main actor to publish.
+                Task { @MainActor in
+                    self?.publish(result, samples: samples, sampleRate: sampleRate, generation: stamp)
+                }
+            }
+        }
+    }
 
-            // Hop to the main actor to analyze + publish.
-            Task { @MainActor in
-                self?.process(samples: samples, sampleRate: sampleRate)
+    private func publish(_ result: PitchReading?, samples: [Float]?, sampleRate: Double, generation stamp: Int) {
+        guard stamp == generation else { return }    // computed before a reset
+        #if DEBUG
+        if let samples { clipRecorder?.append(samples, sampleRate: sampleRate) }
+        #endif
+        if result != reading { reading = result }
+        onReading?(result)
+    }
+}
+
+// MARK: - The worker
+
+extension PitchDetector {
+
+    /// The tracker and the serial queue it lives on. Every access to `tracker`
+    /// and `generation` happens on `queue` — that is the whole thread-safety
+    /// story, which is why `@unchecked Sendable` is honest here.
+    nonisolated final class Worker: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "GuitarKit.PitchDetector", qos: .userInitiated)
+        private var tracker: PitchTracker
+        private var generation = 0
+
+        /// Windows waiting on the queue. Read/written under `pendingLock`
+        /// because the audio thread increments it.
+        private var pending = 0
+        private let pendingLock = NSLock()
+        /// More than this many windows waiting means we're falling behind.
+        private static let maxPending = 2
+
+        init(config: PitchTrackerConfig) {
+            tracker = PitchTracker(config: config)
+        }
+
+        /// Queue one window (from the audio thread). Dropped if the queue is
+        /// already behind. `completion` runs on the worker queue.
+        func process(_ samples: [Float], sampleRate: Double,
+                     completion: @escaping @Sendable (PitchReading?, Int) -> Void) {
+            pendingLock.lock()
+            guard pending < Self.maxPending else { pendingLock.unlock(); return }
+            pending += 1
+            pendingLock.unlock()
+
+            queue.async {
+                let result = self.tracker.process(samples: samples, sampleRate: sampleRate)
+                let stamp = self.generation
+                self.pendingLock.lock(); self.pending -= 1; self.pendingLock.unlock()
+                completion(result, stamp)
+            }
+        }
+
+        /// Process one window and wait for the answer (tests).
+        func processNow(_ samples: [Float], sampleRate: Double) -> (PitchReading?, Int) {
+            queue.sync { (tracker.process(samples: samples, sampleRate: sampleRate), generation) }
+        }
+
+        func setConfig(_ config: PitchTrackerConfig) {
+            queue.async { self.tracker.config = config }
+        }
+
+        func reset(generation: Int) {
+            queue.async {
+                self.tracker.reset()
+                self.generation = generation
             }
         }
     }

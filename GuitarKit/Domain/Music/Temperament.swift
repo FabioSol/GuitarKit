@@ -32,7 +32,7 @@ import Foundation
 ///
 /// `Sendable` requires conformers to be safe across concurrency boundaries,
 /// which our value-type implementations are.
-public protocol Temperament: Sendable {
+nonisolated public protocol Temperament: Sendable {
     /// A short identifier for display/persistence (e.g. "Equal").
     var name: String { get }
 
@@ -58,7 +58,7 @@ public protocol Temperament: Sendable {
 ///
 /// `struct` (value type) with no stored properties — it's effectively a
 /// stateless strategy object.
-public struct EqualTemperament: Temperament {
+nonisolated public struct EqualTemperament: Temperament {
     public let name = "Equal"
 
     /// Public, parameter-less init so other modules can create one.
@@ -85,7 +85,7 @@ public struct EqualTemperament: Temperament {
 /// for a string outside the table (e.g. a 7-string instrument using a 6-entry
 /// profile), we safely return 0 rather than crashing — sweetening simply doesn't
 /// apply to strings the profile doesn't describe.
-public struct SweetenedTemperament: Temperament {
+nonisolated public struct SweetenedTemperament: Temperament {
     public let name: String
 
     /// One cent value per string, in string order. `private let` keeps the raw

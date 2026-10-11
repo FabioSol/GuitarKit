@@ -22,7 +22,7 @@ import Foundation
 /// you hold a `ReferencePitch`, you know it's valid.
 ///
 /// `Equatable`/`Hashable` for comparison & persistence; `Sendable` for safety.
-public struct ReferencePitch: Equatable, Hashable, Sendable {
+nonisolated public struct ReferencePitch: Equatable, Hashable, Sendable {
     /// The lowest and highest A4 frequencies the app allows, per the PRD.
     /// `static let` constants live on the type itself, so callers can read
     /// `ReferencePitch.minHz` without making an instance.

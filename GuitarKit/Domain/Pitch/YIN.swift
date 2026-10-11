@@ -35,7 +35,7 @@
 import Accelerate
 
 /// A namespace (empty `enum`, like `MPM`/`AudioLevel`) holding the pure YIN math.
-enum YIN {
+nonisolated enum YIN {
 
     /// The absolute threshold d'(τ) must dip below to be accepted as the period.
     /// 0.10–0.15 is the paper's recommended range; 0.15 is a touch more forgiving,

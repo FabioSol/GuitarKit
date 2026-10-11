@@ -30,7 +30,7 @@ import Foundation
 /// `struct` gives us cheap, predictable, copy-on-assign semantics and keeps the
 /// state explicit. The owning detector keeps one instance and calls `push` on it
 /// each buffer. `mutating` marks the methods that change that stored state.
-struct PitchSmoother {
+nonisolated struct PitchSmoother {
 
     // MARK: Configuration
 
@@ -40,7 +40,9 @@ struct PitchSmoother {
     private let windowSize: Int
 
     /// EMA smoothing factor (0…1): near 0 = very smooth/slow, near 1 = snappy.
-    /// 0.25 lets the needle settle quickly while still gliding.
+    /// 0.4 tracks peg turns responsively while still gliding — the continuity
+    /// filter upstream keeps junk out of the stream, so the EMA no longer has
+    /// to double as noise protection.
     private let emaFactor: Float
 
     // MARK: State
@@ -54,7 +56,7 @@ struct PitchSmoother {
 
     // MARK: Init
 
-    init(windowSize: Int = 5, emaFactor: Float = 0.25) {
+    init(windowSize: Int = 5, emaFactor: Float = 0.4) {
         // Force an odd window ≥ 1 so the median has a clean middle element.
         self.windowSize = max(1, windowSize | 1)
         self.emaFactor = min(max(emaFactor, 0), 1)

@@ -27,7 +27,7 @@ import Accelerate
 
 /// A namespace (empty `enum`, same pattern as `AudioLevel`) holding the pure
 /// MPM math. Callers write `MPM.detectPitch(...)`.
-enum MPM {
+nonisolated enum MPM {
 
     // MARK: - Result type
 
@@ -252,8 +252,8 @@ enum MPM {
             }
             i += 1
         }
-        // Flush a hump still open at the buffer's end (the case the old code missed
-        // when the crest landed on the final lag).
+        // Flush a hump still open at the buffer's end — its crest can land on
+        // the final lag, which matters for the lowest notes.
         if currentMaxIndex >= minLag {
             peaks.append(parabolicPeak(nsdf, around: currentMaxIndex))
         }
