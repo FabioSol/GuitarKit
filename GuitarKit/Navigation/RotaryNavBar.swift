@@ -37,6 +37,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct RotaryNavBar: View {
 
@@ -57,6 +58,21 @@ struct RotaryNavBar: View {
     /// instantly (no spin-in).
     @State private var hasAppeared = false
 
+    /// Physical device orientation — tracked so icons can rotate to appear
+    /// upright when the user holds the phone sideways on the Scales screen.
+    @State private var deviceOrientation: UIDeviceOrientation = .portrait
+
+    /// Degrees to rotate each icon. Non-zero only when Scales is active and
+    /// the device is in landscape, so other tools are unaffected.
+    private var iconAngle: Double {
+        guard selection == .scales else { return 0 }
+        switch deviceOrientation {
+        case .landscapeLeft:  return 90
+        case .landscapeRight: return -90
+        default:              return 0
+        }
+    }
+
     // MARK: - Accessibility environment
 
     /// Reads the system "Reduce Motion" setting. When `true`, we don't spin; the
@@ -74,12 +90,19 @@ struct RotaryNavBar: View {
     /// to keep the full ring evenly populated for a smooth infinite spin.
     private let copies = 8
 
+    /// The PURE wheel geometry (slot angles + shortest-spin math), unit-tested in
+    /// `RotaryNavGeometryTests`. The view delegates all the trigonometry-adjacent
+    /// math to it and keeps only the SwiftUI concerns (drawing, animation, a11y).
+    private var geometry: RotaryNavGeometry {
+        RotaryNavGeometry(toolCount: tools.count, copies: copies)
+    }
+
     /// Total slots around the full circle (tools × copies).
-    private var slotCount: Int { tools.count * copies }
+    private var slotCount: Int { geometry.slotCount }
 
     /// Degrees between adjacent slots, sized so all the slots fill exactly 360°.
     /// Small enough that a handful of slots span the shallow visible arc.
-    private var anglePerItem: Double { 360.0 / Double(slotCount) }
+    private var anglePerItem: Double { geometry.anglePerItem }
 
     /// How far (in degrees) either side of the apex we still DRAW a slot. Beyond
     /// this the tab has faded out. ~3 slots each side → about seven tabs on the
@@ -140,6 +163,14 @@ struct RotaryNavBar: View {
         .onAppear {
             rotation = nearestRotation(for: selection)
             hasAppeared = true
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            refreshDeviceOrientation()
+        }
+        .onDisappear {
+            UIDevice.current.endGeneratingDeviceOrientationNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            refreshDeviceOrientation()
         }
         // Spin to follow selection changes that come from ELSEWHERE too (e.g. the
         // Circle-of-Fifths cross-links jumping to Chords/Scales).
@@ -168,6 +199,13 @@ struct RotaryNavBar: View {
         // fade/shrink so focus stays on the centered tool and edge tabs dissolve.
         let dist = abs(normalizeToShortest(currentAngle + 90))
         let proximity = max(0, 1 - dist / visibleHalfAngle)
+        // Liquid Glass is the most expensive thing SwiftUI draws (it samples and
+        // blurs what's behind it), and only ~7 of the slots are ever visible.
+        // So only slots within 3 steps of the visible arc carry glass. Any spin
+        // moves at most ~2.5 steps (the tools repeat every `tools.count`
+        // slots), so no coin that can slide into view during an animation is
+        // ever missing its glass — ~13 glass coins instead of all of them.
+        let hasGlass = dist <= visibleHalfAngle + 3 * anglePerItem
 
         let isSelected = (tool == selection)
         // Only the representative slot for each tool is exposed to VoiceOver, so
@@ -177,7 +215,7 @@ struct RotaryNavBar: View {
         return Button {
             select(tool)
         } label: {
-            tabLabel(for: tool, isSelected: isSelected, proximity: proximity)
+            tabLabel(for: tool, isSelected: isSelected, proximity: proximity, hasGlass: hasGlass)
         }
         .buttonStyle(.plain)
         .position(position)
@@ -194,12 +232,15 @@ struct RotaryNavBar: View {
 
     /// The visual content of a tab: just the tool's icon inside a glass coin.
     /// (The tool name is still announced to VoiceOver via the button's label.)
-    private func tabLabel(for tool: GKTool, isSelected: Bool, proximity: Double) -> some View {
+    private func tabLabel(for tool: GKTool, isSelected: Bool, proximity: Double,
+                          hasGlass: Bool) -> some View {
         Image(systemName: tool.systemImage)
             .font(.system(size: 24, weight: isSelected ? .semibold : .regular))
             .foregroundStyle(isSelected ? GKColor.accent : GKColor.textSecondary)
+            .rotationEffect(.degrees(iconAngle))
+            .animation(.easeInOut(duration: 0.25), value: iconAngle)
             .frame(width: itemSize, height: itemSize)
-        .gkGlass(in: Circle())
+        .modifier(CoinGlass(enabled: hasGlass))
         // Centered tab is largest + fully opaque; tabs toward the edges shrink
         // and fade to nothing (smooth enter/exit). Under Reduce Motion we keep a
         // constant size (no growth) but still fade for hierarchy.
@@ -212,7 +253,7 @@ struct RotaryNavBar: View {
     /// The fixed angle of slot `k` (before the wheel's rotation): slot 0 is at the
     /// apex (−90°), each subsequent slot one step further round.
     private func slotAngle(_ k: Int) -> Double {
-        -90.0 + Double(k) * anglePerItem
+        geometry.slotAngle(k)
     }
 
     /// For each tool, the slot index currently CLOSEST to the apex — the one we
@@ -253,18 +294,7 @@ struct RotaryNavBar: View {
     /// The rotation value (closest to the current one, so the spin is shortest)
     /// that brings some slot showing `tool` up to the apex.
     private func nearestRotation(for tool: GKTool) -> Double {
-        var best = rotation
-        var bestDistance = Double.infinity
-        for k in 0..<slotCount where tools[k % tools.count] == tool {
-            // Rotation that puts slot k at the apex: slotAngle(k) + r ≡ −90.
-            let candidate = rotation + normalizeToShortest(-90 - slotAngle(k) - rotation)
-            let distance = abs(candidate - rotation)
-            if distance < bestDistance {
-                bestDistance = distance
-                best = candidate
-            }
-        }
-        return best
+        geometry.nearestRotation(forToolIndex: toolIndex(tool), from: rotation)
     }
 
     /// A tool's natural index in the list (for "tab N of 5" + VoiceOver order).
@@ -272,13 +302,18 @@ struct RotaryNavBar: View {
         tools.firstIndex(of: tool) ?? 0
     }
 
+    private func refreshDeviceOrientation() {
+        let o = UIDevice.current.orientation
+        guard o.isLandscape || o.isPortrait else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            deviceOrientation = o
+        }
+    }
+
     /// Wraps any angle difference into (−180, 180] so we always take the shortest
     /// equivalent rotation — the heart of "shortest path + infinite wrap."
     private func normalizeToShortest(_ degrees: Double) -> Double {
-        var d = degrees.truncatingRemainder(dividingBy: 360)
-        if d > 180 { d -= 360 }
-        if d <= -180 { d += 360 }
-        return d
+        geometry.normalizeToShortest(degrees)
     }
 }
 
@@ -300,4 +335,12 @@ struct RotaryNavBar: View {
         }
     }
     return PreviewHost()
+}
+
+/// Glass for a nav coin — only when it can be seen (see `tabSlot`).
+private struct CoinGlass: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled { content.gkGlass(in: Circle()) } else { content }
+    }
 }
