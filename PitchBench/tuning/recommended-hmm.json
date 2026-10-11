@@ -1,0 +1,20 @@
+{
+  "detuneCents": 92.58697727485175,
+  "engine": "probabilistic",
+  "hmmClarityMidpoint": 0.3356842440088653,
+  "hmmHarmonicityMidpoint": 0.7193781513469703,
+  "hmmHarmonicitySlope": 24.898198820578312,
+  "hmmLevelMidpointDB": -65.9154935309872,
+  "missEvidence": -0.2834142431704642,
+  "onsetRiseDB": 3.37877963478564,
+  "onsetStartProbability": 0.7757356140630417,
+  "onsetSwitchProbability": 0.041687833877009375,
+  "presenceBias": -0.9698618486068908,
+  "salienceMidpoint": 0.5078793418661237,
+  "showThreshold": 0.8980376005873717,
+  "stabilityCents": 15.293857822842138,
+  "stabilityWeight": 0.8187197879473479,
+  "startProbability": 0.0025372899219599254,
+  "stopProbability": 0.14911801842027392,
+  "switchProbability": 0.03943408008946674
+}

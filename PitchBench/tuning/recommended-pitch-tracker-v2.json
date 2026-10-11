@@ -1,0 +1,15 @@
+{
+  "algorithm": "ensemble",
+  "clarityThreshold": 0.5673141259214138,
+  "continuityAgreementCents": 40.664559761876916,
+  "dropoutFrames": 5,
+  "flatMarginSemitones": 6.637971858984633,
+  "harmonicHeadroom": 3.349908283818971,
+  "levelGateDB": -75.65521441129218,
+  "preprocessingEnabled": true,
+  "sharpMarginSemitones": 4.930153173748906,
+  "smootherWindow": 1,
+  "smoothing": 0.6040913372762045,
+  "sustainClarityFactor": 0.822916573177687,
+  "sustainLevelReliefDB": 1.9756904405817786
+}

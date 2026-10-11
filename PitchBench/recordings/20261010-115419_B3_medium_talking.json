@@ -1,0 +1,26 @@
+{
+  "background": "talking",
+  "bandMaxHz": 391.99543598174927,
+  "bandMinHz": 61.73541265701552,
+  "durationSeconds": 6,
+  "expectedHz": 246.94165062806206,
+  "highPassHz": 61.73541265701552,
+  "instrument": "Guitar",
+  "lowPassHz": 988.8826707386097,
+  "note": "B3",
+  "pluck": "medium",
+  "recordedAt": "2026-10-10T17:54:19Z",
+  "referenceA": 440,
+  "sampleRate": 48000,
+  "targetsHz": [
+    82.4068892282175,
+    110.0,
+    146.8323839587038,
+    195.99771799087463,
+    246.94165062806206,
+    329.6275569128699
+  ],
+  "tuning": "Standard",
+  "version": 1,
+  "windowFrames": 4800
+}

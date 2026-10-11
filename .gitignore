@@ -10,3 +10,8 @@
 xcuserdata/
 *.xcuserstate
 .DS_Store
+
+# Optuna study state (PitchBench/tune.py) — local and resumable; the results
+# that matter are PitchBench/TUNING.md and PitchBench/tuning/recommended.json.
+PitchBench/tuning/study.db
+__pycache__/
