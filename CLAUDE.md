@@ -20,6 +20,8 @@ PitchBench/run.sh                                   # pitch benchmark → PitchB
 uv run --with optuna PitchBench/tune.py --help      # parameter search
 ```
 
+CI (`.github/workflows/tests.yml`) runs the same tests on every push to `main` and every pull request, pinned to Xcode 26.5, and reports the pitch benchmark in the run summary.
+
 Stopping an in-flight `xcodebuild test` can wedge the simulator (test host frozen at launch); `xcrun simctl shutdown all` or a Mac reboot clears it. The project uses file-system-synchronized groups: new files under `GuitarKit/` and `GuitarKitTests/` join their target automatically.
 
 ## Architecture rules

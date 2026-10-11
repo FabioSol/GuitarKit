@@ -1,0 +1,84 @@
+# Runs the test suite on every push to main and every pull request, and
+# reports the pitch benchmark alongside it.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes an in-progress run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The project targets iOS 26.5; pin the matching Xcode rather than the
+  # runner's default, so a runner image update can't change the toolchain.
+  DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+
+jobs:
+  tests:
+    name: Unit tests (iOS simulator)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: xcodebuild -version
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme GuitarKit \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee xcodebuild.log \
+            | grep -E "Test Case .* (passed|failed|skipped)|error:|\*\* TEST"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            TestResults.xcresult
+            xcodebuild.log
+
+  pitch-benchmark:
+    # A measurement, not a gate: it reports scores (and whether they moved
+    # from the committed PitchBench/RESULTS*.md) without ever failing the run.
+    name: Pitch benchmark
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the benchmark
+        run: PitchBench/run.sh
+
+      - name: Summarize
+        run: |
+          {
+            echo "## Pitch benchmark"
+            if git diff --quiet -- PitchBench/RESULTS.md PitchBench/RESULTS-*.md; then
+              echo "Scores match the committed results."
+            else
+              echo "**Scores differ from the committed results** — run \`PitchBench/run.sh\` locally and commit the updated RESULTS files if the change is intended."
+              echo '```diff'
+              git diff -U0 -- PitchBench/RESULTS.md PitchBench/RESULTS-*.md | grep -E '^[+-]\|' | head -60
+              echo '```'
+            fi
+            echo
+            sed -n '/^## /,/<details>/p' PitchBench/RESULTS.md | grep -v '<details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pitch-benchmark
+          path: PitchBench/RESULTS*.md
