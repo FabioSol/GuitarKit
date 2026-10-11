@@ -124,7 +124,7 @@ final class MetronomeViewModel {
     /// Owns the shared audio session. We must switch it to PLAYBACK before
     /// starting, or the click could be silenced by the ring/silent switch (same
     /// pattern `ScalesViewModel` uses for its tone playback).
-    @ObservationIgnored private let coordinator = AudioSessionCoordinator()
+    @ObservationIgnored private let coordinator = AudioSessionCoordinator.shared.client()
 
     /// The pure tap-tempo estimator. `var` because each tap mutates it.
     @ObservationIgnored private var tapTempo = TapTempo()
@@ -175,6 +175,9 @@ final class MetronomeViewModel {
         engine.stop()
         isPlaying = false
         stopBeatClock()
+        // Release our audio need — the session stays up if another tool (the
+        // Tuner's mic) still needs it.
+        coordinator.deactivate()
     }
 
     /// Convenience for the single play/stop button.

@@ -19,11 +19,12 @@ import Foundation
 @MainActor
 final class ToolTonePlayer {
 
-    /// Each tool owns its own generator + session coordinator so the tools don't
-    /// fight over the shared audio session.
+    /// Each tool owns its own generator, and its own CLIENT of the app's one
+    /// audio-session owner — which reconciles every tool's needs, so playing a
+    /// scale never disturbs the Tuner's mic or a running metronome.
     private let tone = ToneGenerator()
     private let chordPlayer = PolyphonicTonePlayer()
-    private let coordinator = AudioSessionCoordinator()
+    private let coordinator = AudioSessionCoordinator.shared.client()
     private var playTask: Task<Void, Never>?
 
     /// Play `notes` sequentially, `gapMs` between onsets, then — if `tailMs` > 0
@@ -52,6 +53,7 @@ final class ToolTonePlayer {
                 try? await Task.sleep(for: .milliseconds(tailMs))
             }
             self.tone.stop()
+            if !Task.isCancelled { self.coordinator.deactivate() }   // done playing
         }
     }
 
@@ -73,6 +75,7 @@ final class ToolTonePlayer {
                 try? await Task.sleep(for: .milliseconds(tailMs))
             }
             self.chordPlayer.stop()
+            if !Task.isCancelled { self.coordinator.deactivate() }   // done playing
         }
     }
 
@@ -81,5 +84,6 @@ final class ToolTonePlayer {
         playTask?.cancel()
         tone.stop()
         chordPlayer.stop()
+        coordinator.deactivate()
     }
 }

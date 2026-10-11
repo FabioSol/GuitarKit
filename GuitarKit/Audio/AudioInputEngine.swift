@@ -128,16 +128,10 @@ final class AudioInputEngine: AudioInputProviding {
         // Idempotent: starting an already-running engine would throw.
         guard !isRunning else { return }
 
-        // 1) AUDIO SESSION. The shared session arbitrates audio across apps.
-        let session = AVAudioSession.sharedInstance()
-        // `.playAndRecord` allows simultaneous input (mic) and output (e.g. the
-        // metronome), so background audio keeps playing while the tuner listens.
-        // `.measurement` disables the OS's AGC/EQ for a clean pitch-detection
-        // signal. `.defaultToSpeaker` routes output to the speaker, not the
-        // earpiece. `.duckOthers` politely lowers other apps' audio.
-        try session.setCategory(.playAndRecord, mode: .measurement,
-                                options: [.defaultToSpeaker, .duckOthers])
-        try session.setActive(true)
+        // 1) AUDIO SESSION: configured BEFORE this is called, by the app's one
+        // session owner (`AudioSessionCoordinator`) — the caller states it's
+        // recording first, so every tool's audio needs are reconciled in one
+        // place (docs/adr/0003).
 
         // 2) INPUT NODE + its native format (sample rate, channel count). We tap
         // in the hardware's own format to avoid surprise conversions.
