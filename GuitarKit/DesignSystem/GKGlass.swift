@@ -78,9 +78,9 @@ private struct GKGlassModifier: ViewModifier {
 
         if needsOpaqueFallback {
             // OPAQUE FALLBACK: a solid, ELEVATED surface that's visibly distinct
-            // from the screen background (the old fallback used `GKColor.background`
-            // — the same color as the screen — so chrome nearly vanished under
-            // Increase Contrast / Reduce Transparency). `secondarySystemBackground`
+            // from the screen background (filling with the screen's own color
+            // would make chrome vanish under Increase Contrast / Reduce
+            // Transparency — the opposite of the point). `secondarySystemBackground`
             // is the system's elevated-surface color and adapts to light/dark +
             // high-contrast; we add a firmer border so the control's edge reads.
             content

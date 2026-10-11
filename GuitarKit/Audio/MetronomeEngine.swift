@@ -9,8 +9,8 @@
 //  `MetronomeSequencer`; this class only turns those sample offsets into
 //  scheduled audio.
 //
-//  WHAT'S NEW IN THE CONFIG SLICE (#16):
-//  The engine now schedules TICKS, not just beats. A "tick" is a sub-beat: with
+//  TICKS, NOT JUST BEATS:
+//  The engine schedules TICKS. A "tick" is a sub-beat: with
 //  `ticksPerBeat` ticks per beat (from the chosen `Subdivision`), every
 //  `ticksPerBeat`-th tick lands ON a beat and the others fall BETWEEN beats. For
 //  each tick we decide which sound (if any) to play:
@@ -28,7 +28,7 @@
 //  their anchored offsets and stay perfectly on time. Muting never shifts
 //  anything; it just omits a sound.
 //
-//  HOW PRE-SCHEDULING STAYS DRIFT-FREE (unchanged):
+//  HOW PRE-SCHEDULING STAYS DRIFT-FREE:
 //  `scheduleBuffer(_:at:)` lets us say "play this at sample N of your timeline."
 //  The audio hardware advances that timeline on its own rock-steady clock. We
 //  keep a small ROLLING WINDOW of upcoming ticks scheduled; each tick's

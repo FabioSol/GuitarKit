@@ -17,12 +17,9 @@ struct GuitarKitApp: App {
     var body: some Scene {
         // `WindowGroup` is the standard scene for an app with a main window.
         WindowGroup {
-            // Launch straight into the app shell, which itself opens on the
-            // Tuner — no hub/home screen.
-            // Launch straight into the app shell. RootView owns the single
-            // `.preferredColorScheme` (driven by the user's theme setting, which
-            // defaults to dark for our dark-first look); a redundant `.dark` here
-            // was previously overridden by RootView and did nothing.
+            // Launch straight into the app shell, which opens on the Tuner —
+            // no hub/home screen. RootView owns the one `.preferredColorScheme`
+            // (from the user's theme setting, dark by default), so none here.
             RootView()
         }
     }

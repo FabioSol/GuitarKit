@@ -99,9 +99,9 @@ final class ToneGenerator: TonePlaying {
     // AUDIO-THREAD-ONLY: the main actor never mutates it. To retarget the pitch,
     // `play(...)` writes a single SCALAR — `targetPhaseStep` — which the render
     // callback reads and applies to the generator on the audio thread. Scalars
-    // (Float/Bool) are word-sized, so this hand-off has no torn-read hazard. This
-    // replaces the old code that mutated `generator` from the main actor (a real
-    // data race, since the audio thread mutates its `phase` concurrently).
+    // (Float/Bool) are word-sized, so this hand-off has no torn-read hazard. The
+    // main actor never touches `generator` itself — the audio thread mutates its
+    // `phase` concurrently, so doing so would be a data race.
     //
     // `nonisolated(unsafe)` is us telling the compiler we've reasoned about the
     // threading (same pattern as `AudioInputEngine`).
