@@ -4,6 +4,7 @@ iOS gives an app a single `AVAudioSession`, but several tools use audio at once 
 
 ## Consequences
 
-- Leaving the Tuner while the metronome plays keeps the session in play-and-record rather than switching to playback, because reconfiguring would disturb the metronome's running engine. This looks like a leftover mic configuration; it is deliberate.
+- The Tuner listens in *measurement* mode (no OS processing, the cleanest input for pitch detection) only while nothing else plays: measurement mode also skips the speaker's loudness processing, which made a running metronome noticeably quieter. With both, the session uses play-and-record's default mode; when the Tuner stops listening it returns to playback.
+- Switching modes can make iOS reconfigure running audio engines, so each engine recovers on its own (`AVAudioEngineConfigurationChange`).
 - The session is deactivated only when no tool needs audio.
 - `AudioInputEngine` never configures the session; whoever starts it states "recording" first.

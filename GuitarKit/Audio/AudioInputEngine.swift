@@ -103,7 +103,36 @@ final class AudioInputEngine: AudioInputProviding {
     /// the OS treats this as a hint.)
     @ObservationIgnored private let bufferSize: AVAudioFrameCount = 4096
 
-    init() {}
+    /// The "audio configuration changed" observer (see `init`).
+    @ObservationIgnored nonisolated(unsafe) private var configurationObserver: NSObjectProtocol?
+
+    init() {
+        // When iOS reconfigures audio while we run — the session switching
+        // modes as other tools start/stop playing, a headset plugged in — it
+        // STOPS this engine and the mic's format may change. Recover by itself
+        // instead of leaving the tuner silently deaf.
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recoverFromConfigurationChange() }
+        }
+    }
+
+    deinit {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+    }
+
+    /// Reinstall the tap with the (possibly new) input format and start again.
+    private func recoverFromConfigurationChange() {
+        guard isRunning else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        isRunning = false
+        do {
+            try start()
+        } catch {
+            print("AudioInputEngine couldn't restart after a configuration change: \(error)")
+        }
+    }
 
     // MARK: Buffer subscription
 

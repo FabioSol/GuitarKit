@@ -138,7 +138,10 @@ final class MetronomeViewModel {
     /// drift and stays locked to the audio (which is anchored the same way).
     @ObservationIgnored private var beatTask: Task<Void, Never>?
 
-    init() {}
+    init() {
+        // If iOS reconfigures audio mid-click, restart cleanly (see below).
+        engine.onRestartNeeded = { [weak self] in self?.restartAfterAudioChange() }
+    }
 
     // MARK: - Transport (start / stop / toggle)
 
@@ -178,6 +181,18 @@ final class MetronomeViewModel {
         // Release our audio need — the session stays up if another tool (the
         // Tuner's mic) still needs it.
         coordinator.deactivate()
+    }
+
+    /// The engine was stopped by an audio reconfiguration while playing:
+    /// start it again from a fresh downbeat, together with the beat display.
+    /// The audio-session need is still held, so nothing to re-request.
+    private func restartAfterAudioChange() {
+        guard isPlaying else { return }
+        stopBeatClock()
+        pushConfig()
+        currentBeat = 0
+        engine.start()
+        startBeatClock()
     }
 
     /// Convenience for the single play/stop button.
