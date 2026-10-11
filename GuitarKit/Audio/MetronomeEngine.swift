@@ -109,7 +109,35 @@ final class MetronomeEngine {
     /// config change can't desync the tick math from what's actually scheduled.
     @ObservationIgnored private var ticksPerBeat = 1
 
-    init() {}
+    /// Called when iOS reconfigured audio while the click was playing (the
+    /// session switching modes, a headset plugged in): the engine has been
+    /// stopped and rebuilt, and the owner should restart the click — together
+    /// with its beat display, so the two stay in step.
+    @ObservationIgnored var onRestartNeeded: (() -> Void)?
+
+    /// The "audio configuration changed" observer (see `init`).
+    @ObservationIgnored nonisolated(unsafe) private var configurationObserver: NSObjectProtocol?
+
+    init() {
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleConfigurationChange() }
+        }
+    }
+
+    deinit {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+    }
+
+    /// iOS stopped the engine, and the output format may have changed: tear
+    /// the graph down so the next `start()` rebuilds it for the new format,
+    /// then ask the owner to restart if we were playing.
+    private func handleConfigurationChange() {
+        let wasPlaying = isPlaying
+        shutdown()
+        if wasPlaying { onRestartNeeded?() }
+    }
 
     // MARK: Lifecycle
 

@@ -12,34 +12,32 @@ import XCTest
 
 final class AudioSessionPolicyTests: XCTestCase {
 
-    private func policy(_ needs: [AudioSessionCoordinator.Need],
-                        current: AudioSessionCoordinator.Configuration? = nil) -> AudioSessionCoordinator.Configuration? {
-        AudioSessionCoordinator.configuration(for: needs, current: current)
+    private func policy(_ needs: [AudioSessionCoordinator.Need]) -> AudioSessionCoordinator.Configuration? {
+        AudioSessionCoordinator.configuration(for: needs)
     }
 
     func test_nobodyNeedsAudio_deactivates() {
-        XCTAssertNil(policy([], current: .playAndRecord))
+        XCTAssertNil(policy([]))
     }
 
-    func test_anyoneRecording_playsAndRecords() {
-        XCTAssertEqual(policy([.recording]), .playAndRecord)
-        XCTAssertEqual(policy([.playback, .recording], current: .playback), .playAndRecord,
-                       "the Tuner's mic starts while the metronome plays")
+    func test_tunerListeningAlone_measures() {
+        // The cleanest mic input for pitch detection.
+        XCTAssertEqual(policy([.recording]), .measuring)
     }
 
-    func test_onlyPlayback_usesPlayback() {
-        XCTAssertEqual(policy([.playback]), .playback)
+    func test_tunerListening_whileMetronomePlays_keepsSpeakerLoud() {
+        // Measurement mode skips the speaker's loudness processing — a playing
+        // metronome got noticeably quieter. Default mode keeps it loud.
+        XCTAssertEqual(policy([.recording, .playback]), .playAndRecord)
     }
 
     func test_metronomeStops_whileTunerListens_sessionStaysUp() {
-        // Tuner recording + metronome playing → the metronome stops.
-        XCTAssertEqual(policy([.recording], current: .playAndRecord), .playAndRecord,
-                       "stopping the metronome must not touch the Tuner's mic")
+        XCTAssertEqual(policy([.recording]), .measuring,
+                       "stopping the metronome must not deactivate the Tuner's mic")
     }
 
-    func test_tunerLeaves_whileMetronomePlays_noReconfiguration() {
-        // Play-and-record can already play — switching to .playback would
-        // reconfigure the metronome's running engine for nothing.
-        XCTAssertEqual(policy([.playback], current: .playAndRecord), .playAndRecord)
+    func test_tunerLeaves_whileMetronomePlays_backToPlayback() {
+        // Full speaker loudness again once nothing records.
+        XCTAssertEqual(policy([.playback]), .playback)
     }
 }

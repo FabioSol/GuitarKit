@@ -20,16 +20,19 @@
 //  recording, playback, or nothing. The coordinator derives the session from
 //  ALL current needs:
 //
-//      anyone recording        → .playAndRecord / .measurement (output still
-//                                works, so a running metronome is unaffected)
-//      only playback           → .playback — unless the session is already
-//                                .playAndRecord, which can play too; switching
-//                                would reconfigure engines that are mid-play
-//      nobody needs audio      → deactivate (other apps' audio comes back)
+//      recording, nothing playing → play-and-record, MEASUREMENT mode: iOS
+//                                   skips its own mic processing, so the
+//                                   pitch detector hears the raw string
+//      recording AND playback     → play-and-record, DEFAULT mode: measurement
+//                                   mode also skips the speaker's loudness
+//                                   processing, which made a running metronome
+//                                   noticeably quieter
+//      playback only              → playback (full speaker loudness)
+//      nobody needs audio         → deactivate (other apps' audio comes back)
 //
-//  and touches iOS only when that result CHANGES — repeated requests are free,
-//  so callers can re-state their need whenever convenient without churning the
-//  session.
+//  and touches iOS only when that result CHANGES — repeated requests are free.
+//  A switch can make iOS reconfigure running audio engines; each engine
+//  recovers on its own (`AVAudioEngineConfigurationChange`).
 //
 
 import AVFoundation
@@ -57,7 +60,14 @@ final class AudioSessionCoordinator {
     nonisolated enum Need { case recording, playback }
 
     /// How the session is configured (nil = inactive).
-    nonisolated enum Configuration { case playAndRecord, playback }
+    nonisolated enum Configuration {
+        /// Mic + speaker, no OS processing: the cleanest input for pitch detection.
+        case measuring
+        /// Mic + speaker with normal processing: something is also playing.
+        case playAndRecord
+        /// Speaker only.
+        case playback
+    }
 
     private let session = AVAudioSession.sharedInstance()
     private var needs: [ObjectIdentifier: Need] = [:]
@@ -87,29 +97,30 @@ final class AudioSessionCoordinator {
     }
 
     /// THE POLICY, as a pure function: the configuration every current need
-    /// calls for, given the current one.
-    nonisolated static func configuration(for needs: [Need], current: Configuration?) -> Configuration? {
-        if needs.contains(.recording) { return .playAndRecord }
-        if needs.contains(.playback) {
-            // .playAndRecord already plays sound — keep it rather than
-            // reconfiguring an engine that's mid-play.
-            return current == .playAndRecord ? .playAndRecord : .playback
+    /// calls for.
+    nonisolated static func configuration(for needs: [Need]) -> Configuration? {
+        switch (needs.contains(.recording), needs.contains(.playback)) {
+        case (true, false):  return .measuring
+        case (true, true):   return .playAndRecord
+        case (false, true):  return .playback
+        case (false, false): return nil
         }
-        return nil
     }
 
     /// Apply the policy; touch iOS only when the result changes.
     private func apply() throws {
-        let wanted = Self.configuration(for: Array(needs.values), current: applied)
+        let wanted = Self.configuration(for: Array(needs.values))
         guard wanted != applied else { return }
 
         switch wanted {
-        case .playAndRecord:
+        case .measuring, .playAndRecord:
             // .measurement turns off the OS's automatic gain/EQ so the pitch
-            // detector hears the raw string; .defaultToSpeaker sends any output
-            // (metronome, tones) to the speaker rather than the earpiece;
+            // detector hears the raw string — but it also skips the speaker's
+            // loudness processing, so it's only used when nothing else plays.
+            // .defaultToSpeaker sends output to the speaker, not the earpiece;
             // .duckOthers politely lowers other apps' audio while we listen.
-            try session.setCategory(.playAndRecord, mode: .measurement,
+            try session.setCategory(.playAndRecord,
+                                    mode: wanted == .measuring ? .measurement : .default,
                                     options: [.defaultToSpeaker, .duckOthers])
             try session.setActive(true)
         case .playback:
